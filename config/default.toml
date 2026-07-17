@@ -1,0 +1,105 @@
+# Wreckfest Virtual Wheel — default configuration
+#
+# Key names follow the Linux kernel's KEY_* constants from
+# linux/input-event-codes.h (e.g. "KEY_Q", "KEY_F11", "KEY_LEFT"). Axis
+# names follow the ABS_* constants (e.g. "ABS_X", "ABS_RY").
+#
+# Reload this file without restarting the daemon by sending SIGHUP:
+#   kill -HUP $(pgrep virtual-wheel)
+# Note: [keyboard].device changes require a restart to take effect.
+
+[keyboard]
+# Path to the evdev device node to grab, e.g. "/dev/input/event4".
+# Leave empty ("") to auto-detect the first device that looks like a
+# keyboard. Run `evtest` to find the right device explicitly if
+# auto-detection picks the wrong one (e.g. you have multiple keyboards).
+device = "/dev/input/event3"
+
+
+[mode]
+# Driving Mode: grabs the keyboard exclusively and enables controller
+# emulation. Chat Mode: releases the keyboard for normal desktop/game-chat
+# use. These are the only two ways to switch modes — there is no toggle
+# key, so you always know which mode you're in from which key you pressed.
+driving_hotkey = "KEY_F11"
+chat_hotkey = "KEY_F12"
+
+# Desktop notifications via notify-send when switching modes.
+notifications = true
+
+
+[bindings]
+# Sequential gear buttons. Pressing a key runs the clutch-assisted engage
+# sequence (see [clutch] below) and then holds the gear button down for as
+# long as the key is held; releasing the key releases the gear button.
+gear1 = "KEY_Q"
+gear2 = "KEY_A"
+gear3 = "KEY_W"
+gear4 = "KEY_S"
+gear5 = "KEY_E"
+gear6 = "KEY_D"
+reverse = "KEY_Z"
+
+# Throttle/brake map to the right/left analog triggers respectively.
+# Currently binary (full press or fully released) — see the "throttle and
+# brake curves" item in the README's future-expansion section.
+throttle = "KEY_UP"
+brake = "KEY_DOWN"
+
+# Digital steering, ramped into an analog value — see [steering] below.
+steer_left = "KEY_LEFT"
+steer_right = "KEY_RIGHT"
+
+handbrake = "KEY_SPACE"
+
+# Manual clutch key: held down, it engages the clutch axis directly for
+# as long as it's held — independent of any gear shift, and composes with
+# the automatic per-shift pulse below (holding this key keeps the clutch
+# engaged straight through any number of gear shifts). Also the easiest
+# way to bind the clutch axis in Wreckfest: hold this key while Wreckfest
+# is listening for input, since a manual hold isn't time-limited the way
+# an automatic shift's clutch pulse is.
+clutch = "KEY_LEFTSHIFT"
+
+
+[clutch]
+# Analog clutch-assist automation, applied to every gear change
+# (including reverse). Sequence on key-down: clutch axis presses, then
+# after press_delay_ms the gear button presses (and stays pressed — it
+# only releases when the key is released), then after a further
+# release_delay_ms the clutch axis releases (unless [bindings].clutch is
+# also being held, in which case the axis stays engaged). See
+# ClutchController.h for the full timing diagram, including how a very
+# fast tap is unwound.
+enabled = true
+
+# Which controller axis acts as the clutch. Xbox controllers have no
+# dedicated clutch axis, so this reuses the right stick's Y axis; bind
+# ABS_RY to "Clutch" inside Wreckfest's control settings.
+axis = "ABS_RY"
+
+press_value = 32767
+release_value = 0
+
+press_delay_ms = 20
+release_delay_ms = 20
+
+
+[steering]
+# "digital" is currently the only supported mode: steer_left/steer_right
+# key presses ramp the left stick's X axis toward max_value and let it
+# spring back to center when released. (Mouse steering and analog input
+# curves are listed under future expansion in the README.)
+mode = "digital"
+max_value = 32767
+
+# Axis units per second while a steering key is held / while returning to
+# center. At the default 32767 max_value, ramp_speed = 5000 means roughly
+# 6.5 seconds from center to full lock — tune to taste.
+ramp_speed = 5000
+return_speed = 5000
+
+
+[logging]
+# One of: "error", "warning", "info", "debug".
+level = "info"
