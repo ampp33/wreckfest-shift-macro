@@ -1,7 +1,0 @@
-/home/ampp33/Projects/programming/wreckfest-shift-macro/build/CMakeFiles/virtual-wheel.dir
-/home/ampp33/Projects/programming/wreckfest-shift-macro/build/CMakeFiles/edit_cache.dir
-/home/ampp33/Projects/programming/wreckfest-shift-macro/build/CMakeFiles/rebuild_cache.dir
-/home/ampp33/Projects/programming/wreckfest-shift-macro/build/CMakeFiles/list_install_components.dir
-/home/ampp33/Projects/programming/wreckfest-shift-macro/build/CMakeFiles/install.dir
-/home/ampp33/Projects/programming/wreckfest-shift-macro/build/CMakeFiles/install/local.dir
-/home/ampp33/Projects/programming/wreckfest-shift-macro/build/CMakeFiles/install/strip.dir

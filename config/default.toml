@@ -13,7 +13,7 @@
 # Leave empty ("") to auto-detect the first device that looks like a
 # keyboard. Run `evtest` to find the right device explicitly if
 # auto-detection picks the wrong one (e.g. you have multiple keyboards).
-device = "/dev/input/event3"
+device = "/dev/input/event4"
 
 
 [mode]
