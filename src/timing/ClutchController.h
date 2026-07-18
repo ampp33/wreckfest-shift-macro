@@ -101,6 +101,16 @@ public:
     /// including a manual hold, still wants it engaged).
     void endShift(std::uint16_t gearButtonCode);
 
+    /// Force-clears any held gear/clutch state and cancels any in-flight
+    /// engage sequence, releasing the gear button and clutch axis if they
+    /// were engaged. Call this when switching operating modes: Keybinding
+    /// Mode bypasses beginShift()/endShift() entirely for its own gear
+    /// dispatch, so without this a sequence started in Driving Mode could
+    /// otherwise finish asynchronously after the mode switch and leave a
+    /// button stuck, or fire again after Keybinding Mode already released
+    /// it directly.
+    void reset();
+
 private:
     void workerLoop();
 

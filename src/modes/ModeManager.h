@@ -13,23 +13,34 @@ namespace vwheel {
 class VirtualController;
 class ClutchController;
 
-enum class OperatingMode { Driving, Chat };
+enum class OperatingMode { Driving, Chat, Keybinding };
 
 /// Central orchestrator tying keyboard input to controller output.
 ///
-/// ModeManager owns the two explicit operating modes described in the
+/// ModeManager owns the three explicit operating modes described in the
 /// project spec:
 ///
 ///   - Chat Mode (the startup default): the keyboard is not grabbed, the
 ///     virtual controller is left centered/idle, and every key behaves
 ///     normally for the desktop, Steam overlay, and in-game chat.
 ///   - Driving Mode: the keyboard is grabbed exclusively, and configured
-///     bindings are translated into virtual controller input.
+///     bindings are translated into virtual controller input, gear shifts
+///     going through the full clutch-assisted timing sequence.
+///   - Keybinding Mode: the keyboard is grabbed exclusively, same as
+///     Driving Mode, but every binding is dispatched immediately and
+///     literally — gear keys press/release their button directly with no
+///     clutch-assist pulse or delay, and steering snaps straight to
+///     +-max instead of ramping. Meant to be switched into only long
+///     enough to bind each control in-game: a game's "press any input"
+///     bind-detection needs one clean, unambiguous signal per key, and
+///     the clutch pulse/steering ramp used during actual driving would
+///     otherwise be the first (or only) thing it catches.
 ///
-/// F11/driving_hotkey and F12/chat_hotkey switch modes explicitly — there
-/// is no toggle key, by design (see README). The Ctrl+Alt+Esc emergency
-/// escape sequence and the two mode hotkeys are recognized in *both*
-/// modes; every other binding is only live in Driving Mode.
+/// F11/driving_hotkey, F12/chat_hotkey, and F10/keybind_hotkey switch
+/// modes explicitly — there is no toggle key, by design (see README).
+/// The Ctrl+Alt+Esc emergency escape sequence and the mode hotkeys are
+/// recognized in *all* modes; every other binding is only live in Driving
+/// and Keybinding Mode.
 class ModeManager {
 public:
     using EmergencyCallback = std::function<void()>;
@@ -78,11 +89,21 @@ private:
 
     void enterDrivingMode();
     void enterChatMode();
+    void enterKeybindingMode();
     void dispatchAction(Action action, bool pressed);
-    void dispatchGear(std::uint16_t gearButtonCode, bool pressed);
+    void dispatchGear(std::uint16_t gearButtonCode, bool pressed, bool immediate);
+    /// Snaps steering directly to the current target (left stick +-max/0,
+    /// or D-pad -1/0/1 if [steering].use_dpad) with no ramp. Used for
+    /// [steering].instant, [steering].use_dpad, and, always, Keybinding
+    /// Mode.
+    void applySteering();
     void rebuildActionMap();
     void notify(const std::string& title, const std::string& message);
-    void setLed(bool drivingOn);
+    void setLed(OperatingMode mode);
+    /// Clears any state that could otherwise leak across a mode switch:
+    /// cancels in-flight clutch/gear state and resets the virtual
+    /// controller to neutral. Called on entry to every mode.
+    void resetTransientState();
 
     KeyboardReader& keyboard_;
     VirtualController& controller_;

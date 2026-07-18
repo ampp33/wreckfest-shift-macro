@@ -121,6 +121,37 @@ void ClutchController::endShift(std::uint16_t gearButtonCode) {
     cv_.notify_all();
 }
 
+void ClutchController::reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    bool needsSync = false;
+
+    if (activeRequestGear_ != 0) {
+        if (activeRequestIsHeld_) {
+            controller_.setButton(activeRequestGear_, false);
+            needsSync = true;
+        }
+        activeRequestGear_ = 0;
+        activeRequestIsHeld_ = false;
+        pendingWork_ = false;
+        ++generation_; // cancels any in-flight worker sequence
+        cv_.notify_all();
+    }
+
+    manualClutchHeld_ = false;
+    autoClutchWantsEngaged_ = false;
+    if (axisEngaged_) {
+        axisEngaged_ = false;
+        if (settings_.enabled) {
+            controller_.setAxis(settings_.axis, settings_.releaseValue);
+            needsSync = true;
+        }
+    }
+
+    if (needsSync) {
+        controller_.syncReport();
+    }
+}
+
 void ClutchController::workerLoop() {
     std::unique_lock<std::mutex> lock(mutex_);
     while (true) {

@@ -59,6 +59,7 @@ Config Config::loadFromFile(const std::filesystem::path& path) {
     if (const auto* mode = root["mode"].as_table()) {
         config.mode.drivingHotkey = optionalKey(*mode, "driving_hotkey");
         config.mode.chatHotkey = optionalKey(*mode, "chat_hotkey");
+        config.mode.keybindHotkey = optionalKey(*mode, "keybind_hotkey");
         config.mode.notifications = (*mode)["notifications"].value_or(true);
     }
     if (config.mode.drivingHotkey == 0) {
@@ -108,6 +109,12 @@ Config Config::loadFromFile(const std::filesystem::path& path) {
         config.steering.maxValue = (*steering)["max_value"].value_or(32767);
         config.steering.rampSpeed = (*steering)["ramp_speed"].value_or(5000.0);
         config.steering.returnSpeed = (*steering)["return_speed"].value_or(5000.0);
+        config.steering.instant = (*steering)["instant"].value_or(false);
+        config.steering.useDpad = (*steering)["use_dpad"].value_or(false);
+    }
+    if (config.steering.mode != "digital") {
+        throw std::runtime_error("unrecognized [steering].mode '" + config.steering.mode +
+                                  "': only \"digital\" is currently supported");
     }
 
     if (const auto* logging = root["logging"].as_table()) {

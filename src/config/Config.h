@@ -17,10 +17,11 @@ struct KeyboardConfig {
     std::string device;
 };
 
-/// `[mode]` — Driving/Chat mode hotkeys and notification behavior.
+/// `[mode]` — Driving/Chat/Keybinding mode hotkeys and notification behavior.
 struct ModeConfig {
-    std::uint16_t drivingHotkey = 0; // KEY_F11 by default, resolved from config
-    std::uint16_t chatHotkey = 0;    // KEY_F12 by default
+    std::uint16_t drivingHotkey = 0;   // KEY_F11 by default, resolved from config
+    std::uint16_t chatHotkey = 0;      // KEY_F12 by default
+    std::uint16_t keybindHotkey = 0;   // KEY_F10 by default; 0 = feature unbound
     bool notifications = true;
 };
 
@@ -68,10 +69,24 @@ struct ClutchConfig {
 struct SteeringConfig {
     std::string mode = "digital";
     std::int32_t maxValue = 32767;
-    /// Axis units per second while a steering key is held down.
+    /// Axis units per second while a steering key is held down. Ignored
+    /// when `instant` is true.
     double rampSpeed = 5000.0;
-    /// Axis units per second while returning to center.
+    /// Axis units per second while returning to center. Ignored when
+    /// `instant` is true.
     double returnSpeed = 5000.0;
+    /// If true, steer_left/steer_right snap the axis directly to
+    /// +-maxValue/0 instead of ramping — immediate digital on/off rather
+    /// than a smoothed analog feel. Ignored when `useDpad` is true (the
+    /// D-pad has no ramp to skip — it's a 3-position digital hat).
+    bool instant = false;
+    /// If true, steer_left/steer_right drive the D-pad's horizontal axis
+    /// (ABS_HAT0X, -1/0/1) instead of the left stick's X axis. Always
+    /// immediate, regardless of `instant`/rampSpeed/returnSpeed. Many
+    /// games apply analog-stick smoothing to the left stick regardless of
+    /// how fast it's actually moved; routing through the D-pad — a
+    /// genuinely digital control — sidesteps that.
+    bool useDpad = false;
 };
 
 /// Top-level daemon configuration, parsed from a single TOML file.

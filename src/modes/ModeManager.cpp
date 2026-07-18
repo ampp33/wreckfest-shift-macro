@@ -101,8 +101,12 @@ void ModeManager::handleKeyEvent(const KeyboardReader::KeyEvent& event) {
         enterChatMode();
         return;
     }
+    if (event.pressed && modeConfig_.keybindHotkey != 0 && event.code == modeConfig_.keybindHotkey) {
+        enterKeybindingMode();
+        return;
+    }
 
-    if (mode_ != OperatingMode::Driving) {
+    if (mode_ != OperatingMode::Driving && mode_ != OperatingMode::Keybinding) {
         return; // Chat Mode: no other key is translated to controller input.
     }
 
@@ -113,27 +117,32 @@ void ModeManager::handleKeyEvent(const KeyboardReader::KeyEvent& event) {
 }
 
 void ModeManager::dispatchAction(Action action, bool pressed) {
+    // Keybinding Mode: every binding fires immediately and literally, with
+    // no clutch-assist pulse/delay and no steering ramp — see the class
+    // comment in ModeManager.h for why.
+    const bool immediate = (mode_ == OperatingMode::Keybinding);
+
     switch (action) {
         case Action::Gear1:
-            dispatchGear(VirtualController::kGearButtons[0], pressed);
+            dispatchGear(VirtualController::kGearButtons[0], pressed, immediate);
             break;
         case Action::Gear2:
-            dispatchGear(VirtualController::kGearButtons[1], pressed);
+            dispatchGear(VirtualController::kGearButtons[1], pressed, immediate);
             break;
         case Action::Gear3:
-            dispatchGear(VirtualController::kGearButtons[2], pressed);
+            dispatchGear(VirtualController::kGearButtons[2], pressed, immediate);
             break;
         case Action::Gear4:
-            dispatchGear(VirtualController::kGearButtons[3], pressed);
+            dispatchGear(VirtualController::kGearButtons[3], pressed, immediate);
             break;
         case Action::Gear5:
-            dispatchGear(VirtualController::kGearButtons[4], pressed);
+            dispatchGear(VirtualController::kGearButtons[4], pressed, immediate);
             break;
         case Action::Gear6:
-            dispatchGear(VirtualController::kGearButtons[5], pressed);
+            dispatchGear(VirtualController::kGearButtons[5], pressed, immediate);
             break;
         case Action::Reverse:
-            dispatchGear(VirtualController::kReverseButton, pressed);
+            dispatchGear(VirtualController::kReverseButton, pressed, immediate);
             break;
         case Action::Throttle:
             controller_.setAxis(VirtualController::kRightTrigger,
@@ -149,9 +158,15 @@ void ModeManager::dispatchAction(Action action, bool pressed) {
             break;
         case Action::SteerLeft:
             steerLeftHeld_ = pressed;
+            if (immediate || steeringConfig_.instant || steeringConfig_.useDpad) {
+                applySteering();
+            }
             break;
         case Action::SteerRight:
             steerRightHeld_ = pressed;
+            if (immediate || steeringConfig_.instant || steeringConfig_.useDpad) {
+                applySteering();
+            }
             break;
         case Action::Handbrake:
             controller_.setButton(VirtualController::kHandbrakeButton, pressed);
@@ -167,7 +182,14 @@ void ModeManager::dispatchAction(Action action, bool pressed) {
     }
 }
 
-void ModeManager::dispatchGear(std::uint16_t gearButtonCode, bool pressed) {
+void ModeManager::dispatchGear(std::uint16_t gearButtonCode, bool pressed, bool immediate) {
+    if (immediate) {
+        // Keybinding Mode: a direct, literal press/release with no
+        // clutch-assist automation to confuse a game's bind-detection.
+        controller_.setButton(gearButtonCode, pressed);
+        controller_.syncReport();
+        return;
+    }
     if (pressed) {
         clutch_.beginShift(gearButtonCode);
     } else {
@@ -175,8 +197,30 @@ void ModeManager::dispatchGear(std::uint16_t gearButtonCode, bool pressed) {
     }
 }
 
+void ModeManager::applySteering() {
+    const double target = (steerRightHeld_ && !steerLeftHeld_)   ? 1.0
+                           : (steerLeftHeld_ && !steerRightHeld_) ? -1.0
+                                                                   : 0.0;
+
+    if (steeringConfig_.useDpad) {
+        controller_.setAxis(VirtualController::kDpadX, static_cast<std::int32_t>(target));
+        controller_.syncReport();
+        return;
+    }
+
+    steeringValue_ = target * static_cast<double>(steeringConfig_.maxValue);
+    controller_.setAxis(VirtualController::kLeftStickX,
+                         static_cast<std::int32_t>(std::lround(steeringValue_)));
+    controller_.syncReport();
+}
+
 void ModeManager::tick(std::chrono::steady_clock::duration dt) {
-    if (mode_ != OperatingMode::Driving || steeringConfig_.mode != "digital") {
+    // Keybinding Mode, [steering].instant, and [steering].use_dpad all
+    // drive steering directly from dispatchAction()/applySteering() on
+    // every key event — the ramp integration below is only for the
+    // smoothed left-stick feel of ordinary Driving Mode.
+    if (mode_ != OperatingMode::Driving || steeringConfig_.mode != "digital" ||
+        steeringConfig_.instant || steeringConfig_.useDpad) {
         return;
     }
 
@@ -206,7 +250,8 @@ void ModeManager::enterDrivingMode() {
     Logger::instance().info("Entering Driving Mode");
     keyboard_.grab();
     mode_ = OperatingMode::Driving;
-    setLed(true);
+    resetTransientState();
+    setLed(mode_);
     if (modeConfig_.notifications) {
         notify("Wreckfest Virtual Wheel", "Driving Mode");
     }
@@ -219,19 +264,45 @@ void ModeManager::enterChatMode() {
     Logger::instance().info("Entering Chat Mode");
     keyboard_.release();
     mode_ = OperatingMode::Chat;
-    steerLeftHeld_ = false;
-    steerRightHeld_ = false;
-    steeringValue_ = 0.0;
-    controller_.resetAllInputs();
-    setLed(false);
+    resetTransientState();
+    setLed(mode_);
     if (modeConfig_.notifications) {
         notify("Wreckfest Virtual Wheel", "Chat Mode");
     }
 }
 
-void ModeManager::setLed(bool drivingOn) {
-    // Best-effort optional indicator: Scroll Lock ON = Driving Mode.
-    keyboard_.setLed(LED_SCROLLL, drivingOn);
+void ModeManager::enterKeybindingMode() {
+    if (mode_ == OperatingMode::Keybinding) {
+        return;
+    }
+    Logger::instance().info("Entering Keybinding Mode");
+    keyboard_.grab();
+    mode_ = OperatingMode::Keybinding;
+    resetTransientState();
+    setLed(mode_);
+    if (modeConfig_.notifications) {
+        notify("Wreckfest Virtual Wheel", "Keybinding Mode");
+    }
+}
+
+void ModeManager::resetTransientState() {
+    // Cancels any in-flight clutch/gear sequence and releases whatever it
+    // had engaged, then zeroes the virtual controller outright — a clean
+    // slate regardless of which mode (and which dispatch path) last wrote
+    // to it. Necessary because Keybinding Mode writes gear buttons
+    // directly, bypassing ClutchController's own bookkeeping.
+    clutch_.reset();
+    controller_.resetAllInputs();
+    steerLeftHeld_ = false;
+    steerRightHeld_ = false;
+    steeringValue_ = 0.0;
+}
+
+void ModeManager::setLed(OperatingMode mode) {
+    // Best-effort optional indicators: Scroll Lock = Driving Mode, Num
+    // Lock = Keybinding Mode.
+    keyboard_.setLed(LED_SCROLLL, mode == OperatingMode::Driving);
+    keyboard_.setLed(LED_NUML, mode == OperatingMode::Keybinding);
 }
 
 void ModeManager::notify(const std::string& title, const std::string& message) {

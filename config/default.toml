@@ -13,16 +13,23 @@
 # Leave empty ("") to auto-detect the first device that looks like a
 # keyboard. Run `evtest` to find the right device explicitly if
 # auto-detection picks the wrong one (e.g. you have multiple keyboards).
-device = "/dev/input/event4"
+device = "/dev/input/event2"
 
 
 [mode]
 # Driving Mode: grabs the keyboard exclusively and enables controller
-# emulation. Chat Mode: releases the keyboard for normal desktop/game-chat
-# use. These are the only two ways to switch modes — there is no toggle
-# key, so you always know which mode you're in from which key you pressed.
+# emulation, gear shifts going through the full clutch-assisted timing
+# sequence. Chat Mode: releases the keyboard for normal desktop/game-chat
+# use. Keybinding Mode: grabs the keyboard like Driving Mode, but every
+# binding fires immediately and literally — no clutch pulse/delay on gear
+# shifts, no steering ramp — so a game's "press any input" bind-detection
+# sees one clean signal per key. Switch into it just long enough to bind
+# your controls in-game, then switch back to Driving Mode to actually
+# drive. There is no toggle key for any of these — you always know which
+# mode you're in from which key you pressed.
 driving_hotkey = "KEY_F11"
 chat_hotkey = "KEY_F12"
+keybind_hotkey = "KEY_F10"
 
 # Desktop notifications via notify-send when switching modes.
 notifications = true
@@ -87,17 +94,37 @@ release_delay_ms = 20
 
 [steering]
 # "digital" is currently the only supported mode: steer_left/steer_right
-# key presses ramp the left stick's X axis toward max_value and let it
-# spring back to center when released. (Mouse steering and analog input
-# curves are listed under future expansion in the README.)
+# key presses move the left stick's X axis toward max_value and let it
+# return to center when released. (Mouse steering and analog input curves
+# are listed under future expansion in the README.)
 mode = "digital"
 max_value = 32767
 
 # Axis units per second while a steering key is held / while returning to
 # center. At the default 32767 max_value, ramp_speed = 5000 means roughly
-# 6.5 seconds from center to full lock — tune to taste.
+# 6.5 seconds from center to full lock — tune to taste. Ignored if
+# `instant` below is true.
 ramp_speed = 5000
 return_speed = 5000
+
+# If true, steer_left/steer_right snap the axis straight to +-max_value/0
+# instead of ramping — immediate on/off rather than a smoothed analog
+# feel. Keybinding Mode always behaves this way regardless of this
+# setting, since a game's bind-detection needs an immediate, unambiguous
+# signal. Ignored if use_dpad below is true.
+instant = true
+
+# If true, steer_left/steer_right drive the D-pad's horizontal axis
+# instead of the left stick. Always immediate (the D-pad only has three
+# positions: left/center/right, so there's no ramp to apply regardless of
+# `instant` above). Worth trying if steering still feels smoothed/gradual
+# in-game even with instant = true — many games apply their own
+# analog-stick response curve to the left stick no matter how the axis is
+# actually driven, and a real hat switch bypasses that. Note this changes
+# how you bind steering in Wreckfest: with use_dpad, bind "Steer Left" and
+# "Steer Right" to the D-pad's left/right directions (two digital inputs)
+# instead of binding "Steering" to one analog stick axis.
+use_dpad = true
 
 
 [logging]
