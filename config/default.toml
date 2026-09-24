@@ -1,38 +1,37 @@
-# Wreckfest Virtual Wheel — default configuration
+# Wreckfest Shift Macro — configuration
 #
-# Key names follow the Linux kernel's KEY_* constants from
-# linux/input-event-codes.h (e.g. "KEY_Q", "KEY_F11", "KEY_LEFT"). Axis
-# names follow the ABS_* constants (e.g. "ABS_X", "ABS_RY").
+# Lives next to the plugin as scripts/wreckfest-shift-macro.toml in the
+# Wreckfest install folder. The plugin re-reads it automatically within
+# about a second of it being saved — no need to restart the game.
 #
-# Reload this file without restarting the daemon by sending SIGHUP:
-#   kill -HUP $(pgrep virtual-wheel)
-# Note: [keyboard].device changes require a restart to take effect.
+# Key names use the Linux kernel's KEY_* names (e.g. "KEY_Q", "KEY_F11",
+# "KEY_LEFT"), kept from the Linux daemon version of this project. Axis
+# names use the ABS_* names (e.g. "ABS_X", "ABS_RY"). See
+# src/config/KeyCodes.cpp for the full list.
 
-[keyboard]
-# Path to the evdev device node to grab, e.g. "/dev/input/event4".
-# Leave empty ("") to auto-detect the first device that looks like a
-# keyboard. Run `evtest` to find the right device explicitly if
-# auto-detection picks the wrong one (e.g. you have multiple keyboards).
-device = "/dev/input/event2"
+[controller]
+# XInput slot (0-3) the virtual controller occupies. A physical controller
+# plugged into the same slot is hidden from the game while the plugin is
+# loaded; controllers in other slots work normally.
+slot = 0
 
 
 [mode]
-# Driving Mode: grabs the keyboard exclusively and enables controller
-# emulation, gear shifts going through the full clutch-assisted timing
-# sequence. Chat Mode: releases the keyboard for normal desktop/game-chat
-# use. Keybinding Mode: grabs the keyboard like Driving Mode, but every
-# binding fires immediately and literally — no clutch pulse/delay on gear
-# shifts, no steering ramp — so a game's "press any input" bind-detection
-# sees one clean signal per key. Switch into it just long enough to bind
-# your controls in-game, then switch back to Driving Mode to actually
-# drive. There is no toggle key for any of these — you always know which
-# mode you're in from which key you pressed.
+# Driving Mode: bound keys are hidden from the game and drive the virtual
+# controller instead, gear shifts going through the full clutch-assisted
+# timing sequence. Unbound keys (Esc for the pause menu, etc.) still reach
+# the game. Chat Mode: every key goes to the game untouched, for in-game
+# chat. Keybinding Mode: like Driving Mode, but every binding fires
+# immediately and literally — no clutch pulse/delay on gear shifts, no
+# steering ramp — so the game's "press any input" bind-detection sees one
+# clean signal per key. Switch into it just long enough to bind your
+# controls in-game, then switch back to Driving Mode to actually drive.
+# There is no toggle key for any of these — you always know which mode
+# you're in from which key you pressed. The hotkeys themselves are never
+# passed on to the game.
 driving_hotkey = "KEY_F11"
 chat_hotkey = "KEY_F12"
 keybind_hotkey = "KEY_F10"
-
-# Desktop notifications via notify-send when switching modes.
-notifications = true
 
 
 [bindings]
@@ -68,6 +67,14 @@ handbrake = "KEY_SPACE"
 # an automatic shift's clutch pulse is.
 clutch = "KEY_LEFTSHIFT"
 
+# Reset/recovery key (e.g. flip the car back over after a crash). Every
+# standard controller button is already used by a gear, reverse, or the
+# handbrake, and Back/Start/Guide are deliberately left unbound for
+# menus/the Steam overlay, so this maps to D-pad Up instead — bind
+# Wreckfest's "Reset Vehicle" (or equivalent) control to D-pad Up using
+# Keybinding Mode (F10).
+reset = "KEY_R"
+
 
 [clutch]
 # Analog clutch-assist automation, applied to every gear change
@@ -82,14 +89,15 @@ enabled = true
 
 # Which controller axis acts as the clutch. Xbox controllers have no
 # dedicated clutch axis, so this reuses the right stick's Y axis; bind
-# ABS_RY to "Clutch" inside Wreckfest's control settings.
+# ABS_RY to "Clutch" inside Wreckfest's control settings. (In XInput a
+# positive right-stick Y value is stick *up*.)
 axis = "ABS_RY"
 
 press_value = 32767
 release_value = 0
 
-press_delay_ms = 20
-release_delay_ms = 20
+press_delay_ms = 60
+release_delay_ms = 10
 
 
 [steering]
@@ -129,4 +137,7 @@ use_dpad = true
 
 [logging]
 # One of: "error", "warning", "info", "debug".
-level = "info"
+# "debug" traces every keypress, action dispatch, and clutch/gear state
+# transition — verbose, but exactly what you want when diagnosing a
+# specific shifting issue. Drop back to "info" for normal use.
+level = "debug"

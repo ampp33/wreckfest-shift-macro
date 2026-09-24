@@ -7,27 +7,26 @@
 
 #include "logging/Logger.h"
 
-namespace vwheel {
+namespace vcontroller {
 
-/// `[keyboard]` — which physical device to grab.
-struct KeyboardConfig {
-    /// Path to the evdev device node, e.g. "/dev/input/event4". If empty,
-    /// KeyboardReader auto-detects the first device that looks like a
-    /// keyboard (see KeyboardReader::autoDetectDevice).
-    std::string device;
+/// `[controller]` — where the virtual controller shows up to the game.
+struct ControllerConfig {
+    /// XInput user index (0-3) the virtual controller occupies. A physical
+    /// controller in the same slot is hidden from the game while the
+    /// plugin is loaded; other slots pass through untouched.
+    std::uint32_t slot = 0;
 };
 
-/// `[mode]` — Driving/Chat/Keybinding mode hotkeys and notification behavior.
+/// `[mode]` — Driving/Chat/Keybinding mode hotkeys.
 struct ModeConfig {
     std::uint16_t drivingHotkey = 0;   // KEY_F11 by default, resolved from config
     std::uint16_t chatHotkey = 0;      // KEY_F12 by default
     std::uint16_t keybindHotkey = 0;   // KEY_F10 by default; 0 = feature unbound
-    bool notifications = true;
 };
 
 /// `[bindings]` — keyboard key -> controller action mapping.
 ///
-/// Every field is a KEY_* evdev code. A value of 0 means "unbound": the
+/// Every field is a Windows virtual-key code, resolved from a KEY_* name. A value of 0 means "unbound": the
 /// action has no keyboard key assigned to it and will never fire.
 struct BindingsConfig {
     std::uint16_t gear1 = 0;
@@ -51,6 +50,14 @@ struct BindingsConfig {
     /// composes with the automatic per-shift clutch pulse — see
     /// ClutchController. 0 means unbound.
     std::uint16_t clutch = 0;
+
+    /// Reset/recovery key, mapped to D-pad Up (ABS_HAT0Y) rather than a
+    /// BTN_* code: every standard button is already spoken for by a gear,
+    /// reverse, or the handbrake, and Back/Start/Guide are deliberately
+    /// left free for menus/overlay. The D-pad's vertical axis is
+    /// otherwise unused regardless of [steering].use_dpad (which only
+    /// ever drives the horizontal axis), so it's free for this.
+    std::uint16_t reset = 0;
 };
 
 /// `[clutch]` — analog clutch-assist automation applied to every gear
@@ -89,9 +96,9 @@ struct SteeringConfig {
     bool useDpad = false;
 };
 
-/// Top-level daemon configuration, parsed from a single TOML file.
+/// Top-level plugin configuration, parsed from a single TOML file.
 ///
-/// A Config is an immutable snapshot: reloading (SIGHUP) parses a fresh
+/// A Config is an immutable snapshot: reloading (on file change) parses a fresh
 /// Config and hands it to the components that care, rather than mutating
 /// this one in place. That keeps every component free to decide for
 /// itself how to apply the new settings (e.g. ClutchController copies the
@@ -102,7 +109,7 @@ public:
     /// human-readable message on any parse or validation failure.
     static Config loadFromFile(const std::filesystem::path& path);
 
-    KeyboardConfig keyboard;
+    ControllerConfig controller;
     ModeConfig mode;
     BindingsConfig bindings;
     ClutchConfig clutch;
@@ -110,4 +117,4 @@ public:
     LogLevel logLevel = LogLevel::Info;
 };
 
-} // namespace vwheel
+} // namespace vcontroller

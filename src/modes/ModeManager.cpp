@@ -1,36 +1,42 @@
 #include "modes/ModeManager.h"
 
-#include <linux/input-event-codes.h>
-#include <unistd.h>
-#include <sys/wait.h>
-
 #include <algorithm>
 #include <cmath>
 
+#include "config/KeyCodes.h"
 #include "controller/VirtualController.h"
 #include "logging/Logger.h"
 #include "timing/ClutchController.h"
 
-namespace vwheel {
+namespace vcontroller {
 
-ModeManager::ModeManager(KeyboardReader& keyboard, VirtualController& controller,
-                          ClutchController& clutch, const Config& config)
-    : keyboard_(keyboard), controller_(controller), clutch_(clutch) {
+const char* ModeManager::actionName(Action action) {
+    switch (action) {
+        case Action::Gear1: return "Gear1";
+        case Action::Gear2: return "Gear2";
+        case Action::Gear3: return "Gear3";
+        case Action::Gear4: return "Gear4";
+        case Action::Gear5: return "Gear5";
+        case Action::Gear6: return "Gear6";
+        case Action::Reverse: return "Reverse";
+        case Action::Throttle: return "Throttle";
+        case Action::Brake: return "Brake";
+        case Action::SteerLeft: return "SteerLeft";
+        case Action::SteerRight: return "SteerRight";
+        case Action::Handbrake: return "Handbrake";
+        case Action::Clutch: return "Clutch";
+        case Action::Reset: return "Reset";
+    }
+    return "?";
+}
+
+ModeManager::ModeManager(VirtualController& controller, ClutchController& clutch,
+                          const Config& config)
+    : controller_(controller), clutch_(clutch) {
     applyConfig(config);
 }
 
-void ModeManager::setEmergencyCallback(EmergencyCallback callback) {
-    emergencyCallback_ = std::move(callback);
-}
-
 void ModeManager::applyConfig(const Config& config) {
-    if (!keyboard_.devicePath().empty() && config.keyboard.device != keyboard_.devicePath()) {
-        Logger::instance().warning(
-            "[keyboard].device changed in config but changing the grabbed device at runtime is "
-            "not supported; restart the daemon to pick up the new device. Keeping " +
-            keyboard_.devicePath());
-    }
-
     modeConfig_ = config.mode;
     bindings_ = config.bindings;
     steeringConfig_ = config.steering;
@@ -71,52 +77,54 @@ void ModeManager::rebuildActionMap() {
     bind(bindings_.steerRight, Action::SteerRight);
     bind(bindings_.handbrake, Action::Handbrake);
     bind(bindings_.clutch, Action::Clutch);
+    bind(bindings_.reset, Action::Reset);
 }
 
-void ModeManager::handleKeyEvent(const KeyboardReader::KeyEvent& event) {
-    switch (event.code) {
-        case KEY_LEFTCTRL: leftCtrlHeld_ = event.pressed; break;
-        case KEY_RIGHTCTRL: rightCtrlHeld_ = event.pressed; break;
-        case KEY_LEFTALT: leftAltHeld_ = event.pressed; break;
-        case KEY_RIGHTALT: rightAltHeld_ = event.pressed; break;
-        default: break;
-    }
+bool ModeManager::handleKeyEvent(const KeyboardHook::KeyEvent& event) {
+    Logger::instance().debug(std::string("key ") + KeyCodes::keyName(event.code) +
+                              (event.pressed ? " down" : " up"));
 
-    // Emergency escape: recognized in every mode, always wins.
-    if (event.code == KEY_ESC && event.pressed && (leftCtrlHeld_ || rightCtrlHeld_) &&
-        (leftAltHeld_ || rightAltHeld_)) {
-        Logger::instance().warning("Emergency escape (Ctrl+Alt+Esc) triggered");
-        if (emergencyCallback_) {
-            emergencyCallback_();
+    // Mode-switch hotkeys: recognized in every mode, and never passed on
+    // to the game.
+    if (event.code == modeConfig_.drivingHotkey) {
+        if (event.pressed) {
+            enterDrivingMode();
         }
-        return;
+        return true;
     }
-
-    // Mode-switch hotkeys: also recognized in every mode.
-    if (event.pressed && event.code == modeConfig_.drivingHotkey) {
-        enterDrivingMode();
-        return;
+    if (event.code == modeConfig_.chatHotkey) {
+        if (event.pressed) {
+            enterChatMode();
+        }
+        return true;
     }
-    if (event.pressed && event.code == modeConfig_.chatHotkey) {
-        enterChatMode();
-        return;
-    }
-    if (event.pressed && modeConfig_.keybindHotkey != 0 && event.code == modeConfig_.keybindHotkey) {
-        enterKeybindingMode();
-        return;
+    if (modeConfig_.keybindHotkey != 0 && event.code == modeConfig_.keybindHotkey) {
+        if (event.pressed) {
+            enterKeybindingMode();
+        }
+        return true;
     }
 
     if (mode_ != OperatingMode::Driving && mode_ != OperatingMode::Keybinding) {
-        return; // Chat Mode: no other key is translated to controller input.
+        return false; // Chat Mode: every other key goes to the game untouched.
     }
 
     const auto it = actionByKey_.find(event.code);
-    if (it != actionByKey_.end()) {
-        dispatchAction(it->second, event.pressed);
+    if (it == actionByKey_.end()) {
+        return false; // unbound keys (Esc for the pause menu, etc.) still reach the game
     }
+    dispatchAction(it->second, event.pressed);
+    return true;
+}
+
+void ModeManager::releaseHeldInputs() {
+    Logger::instance().debug("Releasing all held inputs");
+    resetTransientState();
 }
 
 void ModeManager::dispatchAction(Action action, bool pressed) {
+    Logger::instance().debug(std::string("action ") + actionName(action) + (pressed ? " down" : " up"));
+
     // Keybinding Mode: every binding fires immediately and literally, with
     // no clutch-assist pulse/delay and no steering ramp — see the class
     // comment in ModeManager.h for why.
@@ -178,6 +186,10 @@ void ModeManager::dispatchAction(Action action, bool pressed) {
             } else {
                 clutch_.endManualClutch();
             }
+            break;
+        case Action::Reset:
+            controller_.setAxis(VirtualController::kDpadY, pressed ? -1 : 0);
+            controller_.syncReport();
             break;
     }
 }
@@ -248,13 +260,8 @@ void ModeManager::enterDrivingMode() {
         return;
     }
     Logger::instance().info("Entering Driving Mode");
-    keyboard_.grab();
     mode_ = OperatingMode::Driving;
     resetTransientState();
-    setLed(mode_);
-    if (modeConfig_.notifications) {
-        notify("Wreckfest Virtual Wheel", "Driving Mode");
-    }
 }
 
 void ModeManager::enterChatMode() {
@@ -262,13 +269,8 @@ void ModeManager::enterChatMode() {
         return;
     }
     Logger::instance().info("Entering Chat Mode");
-    keyboard_.release();
     mode_ = OperatingMode::Chat;
     resetTransientState();
-    setLed(mode_);
-    if (modeConfig_.notifications) {
-        notify("Wreckfest Virtual Wheel", "Chat Mode");
-    }
 }
 
 void ModeManager::enterKeybindingMode() {
@@ -276,13 +278,8 @@ void ModeManager::enterKeybindingMode() {
         return;
     }
     Logger::instance().info("Entering Keybinding Mode");
-    keyboard_.grab();
     mode_ = OperatingMode::Keybinding;
     resetTransientState();
-    setLed(mode_);
-    if (modeConfig_.notifications) {
-        notify("Wreckfest Virtual Wheel", "Keybinding Mode");
-    }
 }
 
 void ModeManager::resetTransientState() {
@@ -298,27 +295,4 @@ void ModeManager::resetTransientState() {
     steeringValue_ = 0.0;
 }
 
-void ModeManager::setLed(OperatingMode mode) {
-    // Best-effort optional indicators: Scroll Lock = Driving Mode, Num
-    // Lock = Keybinding Mode.
-    keyboard_.setLed(LED_SCROLLL, mode == OperatingMode::Driving);
-    keyboard_.setLed(LED_NUML, mode == OperatingMode::Keybinding);
-}
-
-void ModeManager::notify(const std::string& title, const std::string& message) {
-    // Fork+exec rather than system()/popen() so we never pass user-derived
-    // strings through a shell. The child is reaped automatically because
-    // main() sets SIGCHLD to SIG_IGN at startup.
-    const pid_t pid = fork();
-    if (pid < 0) {
-        Logger::instance().debug("notify-send fork() failed");
-        return;
-    }
-    if (pid == 0) {
-        execlp("notify-send", "notify-send", title.c_str(), message.c_str(),
-               static_cast<char*>(nullptr));
-        _exit(127); // notify-send not installed/available — silently give up
-    }
-}
-
-} // namespace vwheel
+} // namespace vcontroller

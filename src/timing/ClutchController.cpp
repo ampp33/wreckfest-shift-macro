@@ -1,9 +1,31 @@
 #include "timing/ClutchController.h"
 
+#include <string>
+
 #include "controller/VirtualController.h"
 #include "logging/Logger.h"
 
-namespace vwheel {
+namespace vcontroller {
+
+namespace {
+
+/// Human-readable name for debug logging — covers the buttons this class
+/// actually deals in (gears/reverse), falls back to the raw code for
+/// anything else.
+std::string buttonName(std::uint16_t code) {
+    switch (code) {
+        case VirtualController::kButtonA: return "A(Gear1)";
+        case VirtualController::kButtonB: return "B(Gear2)";
+        case VirtualController::kButtonX: return "X(Gear3)";
+        case VirtualController::kButtonY: return "Y(Gear4)";
+        case VirtualController::kButtonLB: return "LB(Gear5)";
+        case VirtualController::kButtonRB: return "RB(Gear6)";
+        case VirtualController::kButtonThumbL: return "ThumbL(Reverse)";
+        default: return "0x" + std::to_string(code);
+    }
+}
+
+} // namespace
 
 ClutchController::ClutchController(VirtualController& controller, Settings initialSettings)
     : controller_(controller), settings_(initialSettings) {
@@ -20,7 +42,7 @@ ClutchController::~ClutchController() {
         worker_.join();
     }
 
-    // Final safety net: if the daemon shuts down while a gear was
+    // Final safety net: if this is destroyed while a gear was
     // genuinely held by the user, the worker thread exits without
     // touching it (see workerLoop()). No concurrent writer remains once
     // the worker has joined, so it's safe to clean up directly here.
@@ -49,6 +71,8 @@ void ClutchController::syncClutchAxis(const Settings& settings) {
         return;
     }
     axisEngaged_ = desired;
+    Logger::instance().debug(std::string("clutch axis -> ") + (desired ? "PRESS" : "release") +
+                              (settings.enabled ? "" : " (clutch disabled in config, not sent)"));
     if (settings.enabled) {
         controller_.setAxis(settings.axis, desired ? settings.pressValue : settings.releaseValue);
         controller_.syncReport();
@@ -75,21 +99,26 @@ void ClutchController::endManualClutch() {
 
 void ClutchController::beginShift(std::uint16_t gearButtonCode) {
     std::lock_guard<std::mutex> lock(mutex_);
+    Logger::instance().debug("beginShift(" + buttonName(gearButtonCode) + ")");
 
-    if (activeRequestGear_ == gearButtonCode) {
-        return; // duplicate press (e.g. autorepeat) — already active
+    if (gearButtonCode == activeRequestGear_ || gearButtonCode == pendingGear_) {
+        Logger::instance().debug("  duplicate/autorepeat, ignored");
+        return; // duplicate press (e.g. autorepeat) — already active/queued
     }
 
-    if (activeRequestGear_ != 0 && activeRequestIsHeld_) {
-        // A different gear is still physically held; this shouldn't
-        // happen in normal single-key-at-a-time driving, but don't leave
-        // it stuck if it does.
-        controller_.setButton(activeRequestGear_, false);
-        controller_.syncReport();
+    if (activeRequestGear_ != 0) {
+        // Something is already in flight or held — queue this one rather
+        // than starting anything now. It'll begin its own engage sequence
+        // once activeRequestGear_'s key is released, or get dropped
+        // untouched if its own key releases first — see the class
+        // comment.
+        Logger::instance().debug("  queued behind " + buttonName(activeRequestGear_));
+        pendingGear_ = gearButtonCode;
+        return;
     }
 
+    Logger::instance().debug("  nothing active — starting engage sequence");
     activeRequestGear_ = gearButtonCode;
-    activeRequestIsHeld_ = false;
     pendingWork_ = true;
     ++generation_;
     cv_.notify_all();
@@ -97,14 +126,29 @@ void ClutchController::beginShift(std::uint16_t gearButtonCode) {
 
 void ClutchController::endShift(std::uint16_t gearButtonCode) {
     std::lock_guard<std::mutex> lock(mutex_);
+    Logger::instance().debug("endShift(" + buttonName(gearButtonCode) + ")");
+
+    if (gearButtonCode == pendingGear_) {
+        // Queued gear released before its turn ever came — just drop it.
+        // The currently held/in-flight gear is untouched.
+        Logger::instance().debug("  was queued, never started — dropped");
+        pendingGear_ = 0;
+        return;
+    }
 
     if (activeRequestGear_ != gearButtonCode) {
+        Logger::instance().debug("  stale release (not active or queued), ignored");
         return; // stale release: already superseded or never began
     }
 
     if (activeRequestIsHeld_) {
+        // Plain, non-automated release — the gear was fully engaged, so
+        // its key simply controls its button directly.
+        Logger::instance().debug("  releasing held button");
         controller_.setButton(gearButtonCode, false);
         controller_.syncReport();
+    } else {
+        Logger::instance().debug("  cancelling in-flight engage (button was never pressed)");
     }
     // Whether the button had been pressed yet or not, we own clearing
     // this source's claim on the clutch axis here: the worker thread
@@ -118,6 +162,16 @@ void ClutchController::endShift(std::uint16_t gearButtonCode) {
     activeRequestIsHeld_ = false;
     pendingWork_ = false;
     ++generation_;
+
+    if (pendingGear_ != 0) {
+        // A gear was queued behind this one — its turn starts now.
+        Logger::instance().debug("  starting queued gear " + buttonName(pendingGear_));
+        activeRequestGear_ = pendingGear_;
+        pendingGear_ = 0;
+        pendingWork_ = true;
+        ++generation_;
+    }
+
     cv_.notify_all();
 }
 
@@ -125,6 +179,7 @@ void ClutchController::reset() {
     std::lock_guard<std::mutex> lock(mutex_);
     bool needsSync = false;
 
+    pendingGear_ = 0;
     if (activeRequestGear_ != 0) {
         if (activeRequestIsHeld_) {
             controller_.setButton(activeRequestGear_, false);
@@ -172,6 +227,8 @@ void ClutchController::workerLoop() {
         // this iteration between steps, never mid-step.
         autoClutchWantsEngaged_ = true;
         syncClutchAxis(settings);
+        Logger::instance().debug("worker: engaging clutch for " + buttonName(gear) + ", waiting " +
+                                  std::to_string(settings.pressDelay.count()) + "ms before pressing");
 
         cv_.wait_for(lock, settings.pressDelay,
                      [&] { return generation_ != myGeneration || stopping_; });
@@ -180,12 +237,20 @@ void ClutchController::workerLoop() {
             // Cancelled before the gear button was ever pressed — endShift()
             // already cleared this source's clutch claim itself in this
             // case. Nothing left to do for this request.
+            Logger::instance().debug("worker: " + buttonName(gear) + " cancelled before press");
             continue;
         }
 
+        // activeRequestGear_ is only ever set to a new value once nothing
+        // else is in flight or held (see beginShift()/endShift()), so
+        // there's never a previous gear to release here — this is always
+        // a plain press into a genuinely empty slot.
         controller_.setButton(gear, true);
         controller_.syncReport();
         activeRequestIsHeld_ = true;
+        Logger::instance().debug("worker: pressed " + buttonName(gear) + ", waiting " +
+                                  std::to_string(settings.releaseDelay.count()) +
+                                  "ms before releasing clutch");
 
         cv_.wait_for(lock, settings.releaseDelay,
                      [&] { return generation_ != myGeneration || stopping_; });
@@ -193,11 +258,15 @@ void ClutchController::workerLoop() {
         if (generation_ == myGeneration) {
             autoClutchWantsEngaged_ = false;
             syncClutchAxis(settings);
+            Logger::instance().debug("worker: " + buttonName(gear) + " engage sequence complete");
+        } else {
+            Logger::instance().debug("worker: " + buttonName(gear) +
+                                      " clutch claim handled elsewhere (superseded before release)");
         }
-        // If the generation changed, endShift() (key released quickly) or
-        // a new beginShift() (different gear force-started) already
-        // handled this source's clutch claim.
+        // If the generation changed, endShift() already handled this
+        // source's clutch claim (and possibly started a queued gear's own
+        // sequence in its place).
     }
 }
 
-} // namespace vwheel
+} // namespace vcontroller

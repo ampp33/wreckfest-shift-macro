@@ -2,13 +2,12 @@
 
 #include <chrono>
 #include <cstdint>
-#include <functional>
 #include <unordered_map>
 
 #include "config/Config.h"
-#include "input/KeyboardReader.h"
+#include "hooks/KeyboardHook.h"
 
-namespace vwheel {
+namespace vcontroller {
 
 class VirtualController;
 class ClutchController;
@@ -20,13 +19,14 @@ enum class OperatingMode { Driving, Chat, Keybinding };
 /// ModeManager owns the three explicit operating modes described in the
 /// project spec:
 ///
-///   - Chat Mode (the startup default): the keyboard is not grabbed, the
-///     virtual controller is left centered/idle, and every key behaves
-///     normally for the desktop, Steam overlay, and in-game chat.
-///   - Driving Mode: the keyboard is grabbed exclusively, and configured
-///     bindings are translated into virtual controller input, gear shifts
-///     going through the full clutch-assisted timing sequence.
-///   - Keybinding Mode: the keyboard is grabbed exclusively, same as
+///   - Chat Mode (the startup default): every key reaches the game
+///     untouched, the virtual controller is left centered/idle, and
+///     typing in in-game chat works normally.
+///   - Driving Mode: bound keys are hidden from the game and translated
+///     into virtual controller input, gear shifts going through the full
+///     clutch-assisted timing sequence. Unbound keys (Esc, etc.) still
+///     reach the game.
+///   - Keybinding Mode: bound keys are hidden from the game, same as
 ///     Driving Mode, but every binding is dispatched immediately and
 ///     literally — gear keys press/release their button directly with no
 ///     clutch-assist pulse or delay, and steering snaps straight to
@@ -38,34 +38,34 @@ enum class OperatingMode { Driving, Chat, Keybinding };
 ///
 /// F11/driving_hotkey, F12/chat_hotkey, and F10/keybind_hotkey switch
 /// modes explicitly — there is no toggle key, by design (see README).
-/// The Ctrl+Alt+Esc emergency escape sequence and the mode hotkeys are
-/// recognized in *all* modes; every other binding is only live in Driving
-/// and Keybinding Mode.
+/// The mode hotkeys are recognized (and hidden from the game) in *all*
+/// modes; every other binding is only live in Driving and Keybinding
+/// Mode.
+///
+/// Not internally synchronized: key events arrive on the game's window
+/// thread and tick() runs on the plugin's own thread, so the owner must
+/// serialize every call (see dllmain.cpp).
 class ModeManager {
 public:
-    using EmergencyCallback = std::function<void()>;
+    ModeManager(VirtualController& controller, ClutchController& clutch, const Config& config);
 
-    ModeManager(KeyboardReader& keyboard, VirtualController& controller, ClutchController& clutch,
-                const Config& config);
+    /// Feeds one key event. Returns true if the key should be hidden from
+    /// the game: the mode hotkeys always are, and bound keys are in
+    /// Driving and Keybinding Mode. Wire this up as KeyboardHook's
+    /// callback.
+    bool handleKeyEvent(const KeyboardHook::KeyEvent& event);
 
-    /// Invoked when Ctrl+Alt+Esc is detected. The callback is expected to
-    /// tear the whole daemon down (see main.cpp) — ModeManager itself only
-    /// detects the combo, it doesn't own process lifetime.
-    void setEmergencyCallback(EmergencyCallback callback);
-
-    /// Feeds one decoded key event. Wire this up as
-    /// KeyboardReader::setKeyEventCallback's target.
-    void handleKeyEvent(const KeyboardReader::KeyEvent& event);
+    /// Releases every held input (gears, clutch, throttle, steering, ...)
+    /// without changing mode. Call when the game window loses focus: the
+    /// key releases that would normally do this go to another window.
+    void releaseHeldInputs();
 
     /// Advances the digital steering ramp/return integration by `dt`. A
     /// no-op outside Driving Mode. Call this at a fixed, fairly high rate
-    /// (the default main loop uses 4 ms / 250 Hz) for smooth steering.
+    /// (the plugin's tick thread uses 4 ms / 250 Hz) for smooth steering.
     void tick(std::chrono::steady_clock::duration dt);
 
-    /// Applies a freshly reloaded configuration (SIGHUP). A change to
-    /// [keyboard].device is logged but not applied — switching which
-    /// physical device is grabbed at runtime is not supported; restart
-    /// the daemon instead.
+    /// Applies a freshly reloaded configuration.
     void applyConfig(const Config& config);
 
     OperatingMode currentMode() const noexcept { return mode_; }
@@ -85,7 +85,11 @@ private:
         SteerRight,
         Handbrake,
         Clutch,
+        Reset,
     };
+
+    /// Human-readable name for debug logging.
+    static const char* actionName(Action action);
 
     void enterDrivingMode();
     void enterChatMode();
@@ -98,14 +102,11 @@ private:
     /// Mode.
     void applySteering();
     void rebuildActionMap();
-    void notify(const std::string& title, const std::string& message);
-    void setLed(OperatingMode mode);
     /// Clears any state that could otherwise leak across a mode switch:
     /// cancels in-flight clutch/gear state and resets the virtual
     /// controller to neutral. Called on entry to every mode.
     void resetTransientState();
 
-    KeyboardReader& keyboard_;
     VirtualController& controller_;
     ClutchController& clutch_;
 
@@ -120,14 +121,6 @@ private:
     double steeringValue_ = 0.0;
     bool steerLeftHeld_ = false;
     bool steerRightHeld_ = false;
-
-    // Modifier tracking for the Ctrl+Alt+Esc emergency escape combo.
-    bool leftCtrlHeld_ = false;
-    bool rightCtrlHeld_ = false;
-    bool leftAltHeld_ = false;
-    bool rightAltHeld_ = false;
-
-    EmergencyCallback emergencyCallback_;
 };
 
-} // namespace vwheel
+} // namespace vcontroller

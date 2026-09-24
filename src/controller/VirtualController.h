@@ -1,56 +1,67 @@
 #pragma once
 
+#include <windows.h>
+#include <xinput.h>
+
 #include <array>
 #include <cstdint>
 #include <mutex>
 
-namespace vwheel {
+namespace vcontroller {
 
-/// Creates and drives a virtual Xbox 360-compatible gamepad via
-/// /dev/uinput. The kernel, udev, SDL2, Steam and Proton all see this as
-/// an ordinary USB Xbox 360 controller (it reports the real Microsoft
-/// vendor/product IDs), so no special driver support is needed on the
-/// game side.
+/// An in-memory Xbox 360 controller that the game reads through its own
+/// XInputGetState() calls (see XInputHook). There is no device, driver,
+/// or other process involved: the "controller" is just the XINPUT_GAMEPAD
+/// this class hands back when the game polls the configured slot.
 ///
 /// setButton()/setAxis() stage individual state changes; call
-/// syncReport() once a logical batch of changes is complete to flush an
-/// EV_SYN/SYN_REPORT frame. Grouping changes this way (e.g. "clutch axis
-/// + gear button" in one frame) lets consumers observe them atomically.
+/// syncReport() once a logical batch of changes is complete to publish
+/// them. The game only ever sees published state, so grouping changes
+/// this way (e.g. "clutch axis + gear button" in one frame) lets it
+/// observe them atomically — the same contract the uinput-based version
+/// of this class had with EV_SYN/SYN_REPORT.
 ///
-/// Thread-safe: both the main/epoll thread (throttle, brake, steering,
-/// handbrake) and ClutchController's worker thread (gear buttons, clutch
-/// axis) write to the same instance concurrently. An internal mutex
-/// serializes every write so a syncReport() from one thread can never
-/// interleave with a partially-written update from the other.
+/// Thread-safe: the game's input thread (key events, via KeyboardHook),
+/// the plugin's tick thread (steering ramp), ClutchController's worker
+/// thread (gear buttons, clutch axis), and the game's XInput polling all
+/// touch the same instance concurrently. An internal mutex serializes
+/// every access.
 class VirtualController {
 public:
-    VirtualController();
-    ~VirtualController();
+    VirtualController() = default;
 
     VirtualController(const VirtualController&) = delete;
     VirtualController& operator=(const VirtualController&) = delete;
 
-    /// Sets a BTN_* digital button's state.
+    /// Sets one of the kButton* digital buttons' state.
     void setButton(std::uint16_t code, bool pressed);
 
-    /// Sets an ABS_* axis's raw value. Range depends on the axis: sticks
-    /// and the clutch axis are signed 16-bit (-32768..32767), triggers are
-    /// unsigned 8-bit (0..255), and the D-pad hat axes are -1/0/1.
+    /// Sets one of the k* axes' raw value. Range depends on the axis:
+    /// sticks and the clutch axis are signed 16-bit (-32768..32767),
+    /// triggers are unsigned 8-bit (0..255), and the D-pad axes are
+    /// -1/0/1 (for kDpadY, -1 is up, matching the Linux hat convention
+    /// the config's ABS_HAT0Y name comes from). Out-of-range values are
+    /// clamped.
     void setAxis(std::uint16_t code, std::int32_t value);
 
-    /// Flushes a SYN_REPORT, making all staged setButton()/setAxis() calls
-    /// since the last syncReport() visible to readers atomically.
+    /// Publishes every setButton()/setAxis() call since the last
+    /// syncReport() to the game atomically.
     void syncReport();
 
     /// Centers both sticks, zeroes both triggers and the D-pad, and
-    /// releases every button. Used when entering Chat Mode so the game
-    /// doesn't see a stuck input if the mode switch happens mid-press.
+    /// releases every button, publishing immediately. Used on every mode
+    /// switch so the game doesn't see a stuck input if the switch happens
+    /// mid-press.
     void resetAllInputs();
 
+    /// Fills `state` with the currently published controller state. Called
+    /// from the game's XInputGetState() via XInputHook.
+    void readState(XINPUT_STATE& state);
+
     // --- Axis code constants -------------------------------------------------
-    // Exposed so higher layers (ModeManager, ClutchController) can address
-    // specific axes without depending on <linux/input-event-codes.h>
-    // themselves.
+    // Numbered after the Linux ABS_* codes they're named for in config
+    // files (see KeyCodes::lookupAxis); the values themselves are just
+    // identifiers now.
     static constexpr std::uint16_t kLeftStickX = 0x00;  // ABS_X
     static constexpr std::uint16_t kLeftStickY = 0x01;  // ABS_Y
     static constexpr std::uint16_t kLeftTrigger = 0x02; // ABS_Z  (LT, 0..255)
@@ -65,24 +76,23 @@ public:
     static constexpr std::int32_t kTriggerMin = 0;
     static constexpr std::int32_t kTriggerMax = 255;
 
-    // --- Button code constants (BTN_* from linux/input-event-codes.h) --------
-    static constexpr std::uint16_t kButtonA = 0x130;
-    static constexpr std::uint16_t kButtonB = 0x131;
-    static constexpr std::uint16_t kButtonX = 0x133;
-    static constexpr std::uint16_t kButtonY = 0x134;
-    static constexpr std::uint16_t kButtonLB = 0x136;
-    static constexpr std::uint16_t kButtonRB = 0x137;
-    static constexpr std::uint16_t kButtonBack = 0x13a;
-    static constexpr std::uint16_t kButtonStart = 0x13b;
-    static constexpr std::uint16_t kButtonGuide = 0x13c;
-    static constexpr std::uint16_t kButtonThumbL = 0x13d;
-    static constexpr std::uint16_t kButtonThumbR = 0x13e;
+    // --- Button code constants: XINPUT_GAMEPAD_* bit flags --------------------
+    static constexpr std::uint16_t kButtonA = XINPUT_GAMEPAD_A;
+    static constexpr std::uint16_t kButtonB = XINPUT_GAMEPAD_B;
+    static constexpr std::uint16_t kButtonX = XINPUT_GAMEPAD_X;
+    static constexpr std::uint16_t kButtonY = XINPUT_GAMEPAD_Y;
+    static constexpr std::uint16_t kButtonLB = XINPUT_GAMEPAD_LEFT_SHOULDER;
+    static constexpr std::uint16_t kButtonRB = XINPUT_GAMEPAD_RIGHT_SHOULDER;
+    static constexpr std::uint16_t kButtonBack = XINPUT_GAMEPAD_BACK;
+    static constexpr std::uint16_t kButtonStart = XINPUT_GAMEPAD_START;
+    static constexpr std::uint16_t kButtonThumbL = XINPUT_GAMEPAD_LEFT_THUMB;
+    static constexpr std::uint16_t kButtonThumbR = XINPUT_GAMEPAD_RIGHT_THUMB;
 
     /// Fixed mapping from "gear N" (index 0..5 == gear1..gear6) to the
     /// Xbox button that represents it. Wreckfest (and most racing sims)
     /// let you bind individual gears to arbitrary controller buttons, so
     /// this is a design choice rather than a hardware constraint: it
-    /// leaves Back/Start/Guide free for menu/overlay use.
+    /// leaves Back/Start free for menu use.
     static constexpr std::array<std::uint16_t, 6> kGearButtons = {
         kButtonA, kButtonB, kButtonX, kButtonY, kButtonLB, kButtonRB,
     };
@@ -90,11 +100,13 @@ public:
     static constexpr std::uint16_t kHandbrakeButton = kButtonThumbR;
 
 private:
-    void createDevice();
-    void writeEvent(std::uint16_t type, std::uint16_t code, std::int32_t value);
-
-    int fd_ = -1;
     std::mutex mutex_;
+    XINPUT_GAMEPAD staged_{};
+    XINPUT_GAMEPAD published_{};
+    // XInput's change counter: games may skip processing a poll whose
+    // dwPacketNumber matches the previous one, so it must advance on
+    // every publish.
+    DWORD packetNumber_ = 0;
 };
 
-} // namespace vwheel
+} // namespace vcontroller

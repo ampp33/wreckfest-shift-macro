@@ -5,11 +5,12 @@
 #include <string>
 #include <string_view>
 
-namespace vwheel {
+namespace vcontroller {
 
-/// Translates between the Linux kernel's KEY_*/BTN_*/ABS_* symbolic names
-/// (as used in linux/input-event-codes.h, and thus in TOML config files)
-/// and their numeric evdev/uinput codes.
+/// Translates the Linux kernel's KEY_*/ABS_* symbolic names used in TOML
+/// config files (kept from the Linux daemon version of this project, so
+/// existing configs still work) into Windows virtual-key codes and
+/// VirtualController axis codes.
 ///
 /// Keeping this table separate from Config.cpp lets both the keyboard
 /// binding parser and any future tooling (e.g. a `--list-keys` CLI flag)
@@ -23,10 +24,10 @@ std::optional<std::uint16_t> lookupKey(std::string_view name);
 /// Looks up an ABS_* axis name (e.g. "ABS_X", "ABS_RY").
 std::optional<std::uint16_t> lookupAxis(std::string_view name);
 
-/// Returns the symbolic KEY_* name for a numeric code, or "KEY_<n>" if
+/// Returns the symbolic KEY_* name for a virtual-key code, or "VK_<n>" if
 /// unknown. Used for diagnostic logging.
 std::string keyName(std::uint16_t code);
 
 } // namespace KeyCodes
 
-} // namespace vwheel
+} // namespace vcontroller
