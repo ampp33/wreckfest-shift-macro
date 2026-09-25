@@ -6,7 +6,7 @@
 
 #include "config/KeyCodes.h"
 
-namespace vwheel {
+namespace vcontroller {
 
 namespace {
 
@@ -52,15 +52,19 @@ Config Config::loadFromFile(const std::filesystem::path& path) {
 
     Config config;
 
-    if (const auto* keyboard = root["keyboard"].as_table()) {
-        config.keyboard.device = (*keyboard)["device"].value_or(std::string{});
+    if (const auto* controller = root["controller"].as_table()) {
+        const auto slot = (*controller)["slot"].value_or(0);
+        if (slot < 0 || slot > 3) {
+            throw std::runtime_error("[controller].slot must be 0-3 (got " +
+                                      std::to_string(slot) + ")");
+        }
+        config.controller.slot = static_cast<std::uint32_t>(slot);
     }
 
     if (const auto* mode = root["mode"].as_table()) {
         config.mode.drivingHotkey = optionalKey(*mode, "driving_hotkey");
         config.mode.chatHotkey = optionalKey(*mode, "chat_hotkey");
         config.mode.keybindHotkey = optionalKey(*mode, "keybind_hotkey");
-        config.mode.notifications = (*mode)["notifications"].value_or(true);
     }
     if (config.mode.drivingHotkey == 0) {
         throw std::runtime_error("[mode].driving_hotkey must be set to a valid KEY_* name");
@@ -87,6 +91,8 @@ Config Config::loadFromFile(const std::filesystem::path& path) {
         config.bindings.handbrake = optionalKey(*bindings, "handbrake");
 
         config.bindings.clutch = optionalKey(*bindings, "clutch");
+
+        config.bindings.reset = optionalKey(*bindings, "reset");
     }
 
     if (const auto* clutch = root["clutch"].as_table()) {
@@ -100,6 +106,23 @@ Config Config::loadFromFile(const std::filesystem::path& path) {
             std::chrono::milliseconds((*clutch)["press_delay_ms"].value_or(2));
         config.clutch.releaseDelay =
             std::chrono::milliseconds((*clutch)["release_delay_ms"].value_or(2));
+
+        const auto timing = (*clutch)["timing"].value_or(std::string{"ms"});
+        if (timing != "ms" && timing != "frames") {
+            throw std::runtime_error("unrecognized [clutch].timing '" + timing +
+                                      "': expected \"ms\" or \"frames\"");
+        }
+        config.clutch.frameTiming = timing == "frames";
+        const auto frames = [&](std::string_view tomlKey) {
+            const auto value = (*clutch)[tomlKey].value_or(2);
+            if (value < 0 || value > 60) {
+                throw std::runtime_error("[clutch]." + std::string(tomlKey) +
+                                          " must be 0-60 (got " + std::to_string(value) + ")");
+            }
+            return static_cast<std::uint32_t>(value);
+        };
+        config.clutch.pressDelayFrames = frames("press_delay_frames");
+        config.clutch.releaseDelayFrames = frames("release_delay_frames");
     } else {
         config.clutch.enabled = false;
     }
@@ -124,4 +147,4 @@ Config Config::loadFromFile(const std::filesystem::path& path) {
     return config;
 }
 
-} // namespace vwheel
+} // namespace vcontroller

@@ -1,15 +1,30 @@
 #include "logging/Logger.h"
 
+#include <windows.h>
+
 #include <array>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
 
-namespace vwheel {
+namespace vcontroller {
 
 Logger& Logger::instance() {
     static Logger logger;
     return logger;
+}
+
+bool Logger::openFile(const std::filesystem::path& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::FILE* file = _wfopen(path.c_str(), L"w");
+    if (file == nullptr) {
+        return false;
+    }
+    if (file_ != nullptr) {
+        std::fclose(file_);
+    }
+    file_ = file;
+    return true;
 }
 
 void Logger::setLevel(LogLevel level) {
@@ -58,16 +73,24 @@ void Logger::log(LogLevel level, std::string_view message) {
                         now.time_since_epoch()) % 1000;
 
     std::tm tmBuf{};
-    localtime_r(&nowTimeT, &tmBuf);
+    localtime_s(&tmBuf, &nowTimeT);
 
     std::array<char, 32> timeBuf{};
     std::strftime(timeBuf.data(), timeBuf.size(), "%H:%M:%S", &tmBuf);
 
-    FILE* stream = (level == LogLevel::Error) ? stderr : stdout;
-    std::fprintf(stream, "[%s.%03ld] [%.*s] %.*s\n", timeBuf.data(),
-                 static_cast<long>(ms.count()), static_cast<int>(levelTag(level).size()),
-                 levelTag(level).data(), static_cast<int>(message.size()), message.data());
-    std::fflush(stream);
+    std::array<char, 1024> line{};
+    std::snprintf(line.data(), line.size(), "[%s.%03ld] [%.*s] %.*s\n", timeBuf.data(),
+                  static_cast<long>(ms.count()), static_cast<int>(levelTag(level).size()),
+                  levelTag(level).data(), static_cast<int>(message.size()), message.data());
+
+    if (file_ != nullptr) {
+        std::fputs(line.data(), file_);
+        // Flushed per line so the log survives the game crashing or being
+        // killed, which is exactly when you'd want to read it.
+        std::fflush(file_);
+    } else {
+        OutputDebugStringA(line.data());
+    }
 }
 
-} // namespace vwheel
+} // namespace vcontroller
