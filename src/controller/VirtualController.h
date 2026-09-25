@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 
 namespace vcontroller {
@@ -58,6 +59,15 @@ public:
     /// from the game's XInputGetState() via XInputHook.
     void readState(XINPUT_STATE& state);
 
+    /// Test hook: `observer` is invoked with every state as it is
+    /// published (syncReport() and resetAllInputs()), in publication
+    /// order, including publishes that change nothing. It runs with the
+    /// controller's internal mutex held, so it must be quick and must not
+    /// call back into this VirtualController. Pass an empty function to
+    /// detach. Unused by the plugin itself.
+    using PublishObserver = std::function<void(const XINPUT_GAMEPAD&)>;
+    void setPublishObserver(PublishObserver observer);
+
     // --- Axis code constants -------------------------------------------------
     // Numbered after the Linux ABS_* codes they're named for in config
     // files (see KeyCodes::lookupAxis); the values themselves are just
@@ -107,6 +117,7 @@ private:
     // dwPacketNumber matches the previous one, so it must advance on
     // every publish.
     DWORD packetNumber_ = 0;
+    PublishObserver observer_;
 };
 
 } // namespace vcontroller

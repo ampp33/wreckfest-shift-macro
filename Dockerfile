@@ -1,10 +1,13 @@
-# Cross-compiles the .asi plugin with MinGW-w64 and exports it laid out
-# like the game folder, ready to copy into Wreckfest's install directory.
+# Cross-compiles the .asi plugin with MinGW-w64 in a clean container, so
+# you don't need a toolchain on the host. The image builds the binary;
+# running it copies the result into a bind-mounted host directory.
 #
-#   DOCKER_BUILDKIT=1 docker build --output out .
+#   mkdir -p build/scripts
+#   docker build -t wreckfest-shift-macro-builder .
+#   docker run --rm -v "$(pwd)/build/scripts:/build" wreckfest-shift-macro-builder
 #
-# Result: out/scripts/wreckfest-shift-macro.asi + wreckfest-shift-macro.toml
-FROM ubuntu:24.04 AS build
+# Result: build/scripts/wreckfest-shift-macro.asi + wreckfest-shift-macro.toml
+FROM ubuntu:24.04
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -22,7 +25,4 @@ RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake \
     && cmake --build build -j"$(nproc)"
 
-# Export stage: `--output <dir>` copies these files to the host.
-FROM scratch AS export
-COPY --from=build /src/build/wreckfest-shift-macro.asi /scripts/
-COPY --from=build /src/config/default.toml /scripts/wreckfest-shift-macro.toml
+CMD ["sh", "-c", "cp build/wreckfest-shift-macro.asi /build/ && cp config/default.toml /build/wreckfest-shift-macro.toml"]

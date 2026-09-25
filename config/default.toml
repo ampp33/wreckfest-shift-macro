@@ -96,8 +96,8 @@ axis = "ABS_RY"
 press_value = 32767
 release_value = 0
 
-press_delay_ms = 60
-release_delay_ms = 10
+press_delay_ms = 20
+release_delay_ms = 20
 
 
 [steering]
@@ -112,7 +112,7 @@ max_value = 32767
 # center. At the default 32767 max_value, ramp_speed = 5000 means roughly
 # 6.5 seconds from center to full lock — tune to taste. Ignored if
 # `instant` below is true.
-ramp_speed = 5000
+ramp_speed = 5000,
 return_speed = 5000
 
 # If true, steer_left/steer_right snap the axis straight to +-max_value/0

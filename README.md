@@ -56,7 +56,7 @@ multi-millisecond clutch sequence so the game thread never blocks.
    WINEDLLOVERRIDES="version=n,b" %command%
    ```
 
-2. **The plugin.** Build it (below) and copy the contents of `out/` into
+2. **The plugin.** Build it (below) and copy the contents of `build/` into
    the Wreckfest install folder:
 
    ```
@@ -86,10 +86,12 @@ Cross-compiles with MinGW-w64 in a clean container, so you don't need a
 toolchain on the host:
 
 ```sh
-DOCKER_BUILDKIT=1 docker build --output out .
+mkdir -p build/scripts
+docker build -t wreckfest-shift-macro-builder .
+docker run --rm -v "$(pwd)/build/scripts:/build" wreckfest-shift-macro-builder
 ```
 
-The result is `out/scripts/wreckfest-shift-macro.asi` plus a copy of
+The result is `build/scripts/wreckfest-shift-macro.asi` plus a copy of
 [`config/default.toml`](config/default.toml) named
 `wreckfest-shift-macro.toml`. The `.asi` is fully statically linked and
 depends only on system DLLs.

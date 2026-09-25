@@ -60,6 +60,9 @@ void VirtualController::syncReport() {
     std::lock_guard<std::mutex> lock(mutex_);
     published_ = staged_;
     ++packetNumber_;
+    if (observer_) {
+        observer_(published_);
+    }
 }
 
 void VirtualController::resetAllInputs() {
@@ -67,6 +70,14 @@ void VirtualController::resetAllInputs() {
     staged_ = XINPUT_GAMEPAD{};
     published_ = staged_;
     ++packetNumber_;
+    if (observer_) {
+        observer_(published_);
+    }
+}
+
+void VirtualController::setPublishObserver(PublishObserver observer) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    observer_ = std::move(observer);
 }
 
 void VirtualController::readState(XINPUT_STATE& state) {

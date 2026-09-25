@@ -6,16 +6,29 @@ project(wreckfest-shift-macro
     LANGUAGES CXX
 )
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Host-native test harness (Linux): builds the plugin's portable logic
+# against header shims and runs keypress -> controller-event scenarios.
+#   cmake -S . -B build/tests -DWRECKFEST_TESTS=ON
+#   cmake --build build/tests -j && ctest --test-dir build/tests --output-on-failure
+option(WRECKFEST_TESTS "Build the host-native test harness instead of the plugin" OFF)
+option(WRECKFEST_TSAN "Build the test harness with ThreadSanitizer" OFF)
+if(WRECKFEST_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+    return()
+endif()
+
 if(NOT WIN32)
     message(FATAL_ERROR
         "This is a Windows DLL (.asi plugin). Cross-compile with MinGW-w64: "
         "cmake -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake ..., "
-        "or use the Docker build (see README).")
+        "or use the Docker build (see README). To build the test harness "
+        "instead, pass -DWRECKFEST_TESTS=ON.")
 endif()
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
