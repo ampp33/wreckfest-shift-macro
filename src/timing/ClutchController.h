@@ -9,6 +9,7 @@
 namespace vcontroller {
 
 class VirtualController;
+struct ClutchConfig;
 
 /// Drives the clutch axis and the clutch-assisted gear shift described in
 /// the project README. Two independent things can each want the clutch
@@ -69,6 +70,16 @@ class VirtualController;
 /// plausibly both be considered "active." A queued gear still goes
 /// through the same press_delay_ms/fast-tap-cancel timing as any fresh
 /// shift from neutral once its turn starts.
+///
+/// Frame timing (Settings::frameTiming): steps 1-5 are counted in game
+/// polls instead of milliseconds, and run on the game's own polling
+/// thread via onGamePoll() rather than on the worker. Each onGamePoll()
+/// call sets the state that very poll returns, so with pressFrames = P
+/// and releaseFrames = R the game sees exactly P polls of clutch only,
+/// then R polls of gear + clutch, then gear only. R = 0 means the game
+/// never sees the gear and the clutch together; P = 0 means they appear
+/// in the same poll. Everything else (holding, queuing, cancelling on
+/// key release) behaves the same as with millisecond timing.
 class ClutchController {
 public:
     struct Settings {
@@ -78,6 +89,11 @@ public:
         std::int32_t releaseValue = 0;
         std::chrono::milliseconds pressDelay{2};
         std::chrono::milliseconds releaseDelay{2};
+        bool frameTiming = false;
+        std::uint32_t pressFrames = 2;
+        std::uint32_t releaseFrames = 2;
+
+        static Settings fromConfig(const ClutchConfig& config);
     };
 
     /// `controller` must outlive this ClutchController.
@@ -129,7 +145,18 @@ public:
     /// it directly.
     void reset();
 
+    /// Call from the game's XInputGetState() for the virtual slot, just
+    /// before the published state is read. Advances a frame-timed engage
+    /// sequence by one poll (see the class comment); does nothing when no
+    /// frame-timed sequence is in flight.
+    void onGamePoll();
+
 private:
+    /// Starts the engage sequence for activeRequestGear_ — on the worker
+    /// with millisecond timing, on the next onGamePoll() with frame
+    /// timing. Must be called with mutex_ held.
+    void startEngage();
+
     void workerLoop();
 
     /// Recomputes whether the clutch axis should be engaged from every
@@ -169,6 +196,12 @@ private:
     // against its own snapshot to detect that its in-flight request was
     // superseded or cancelled while it was sleeping.
     std::uint64_t generation_ = 0;
+
+    // Frame-timed engage sequence for activeRequestGear_, advanced by
+    // onGamePoll(). frameSettings_ is the snapshot it started with.
+    bool frameSequenceActive_ = false;
+    std::uint32_t frameIndex_ = 0; // polls seen since the sequence started
+    Settings frameSettings_;
 
     // Clutch axis engagement sources — see syncClutchAxis().
     bool manualClutchHeld_ = false;

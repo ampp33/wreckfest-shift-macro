@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <string>
 
 namespace vcontroller {
 
@@ -68,6 +69,16 @@ public:
     using PublishObserver = std::function<void(const XINPUT_GAMEPAD&)>;
     void setPublishObserver(PublishObserver observer);
 
+    /// Reads axis `code` (one of the k* axis constants) back out of a
+    /// gamepad state, in the same units setAxis() takes. 0 for an unknown
+    /// code.
+    static std::int32_t axisValue(const XINPUT_GAMEPAD& pad, std::uint16_t code);
+
+    /// Human-readable name for a gear/reverse button code, e.g.
+    /// "B(Gear2)", for logging. Falls back to the raw code for anything
+    /// else.
+    static std::string buttonName(std::uint16_t code);
+
     // --- Axis code constants -------------------------------------------------
     // Numbered after the Linux ABS_* codes they're named for in config
     // files (see KeyCodes::lookupAxis); the values themselves are just
@@ -107,6 +118,9 @@ public:
         kButtonA, kButtonB, kButtonX, kButtonY, kButtonLB, kButtonRB,
     };
     static constexpr std::uint16_t kReverseButton = kButtonThumbL;
+    /// Every button a gear or reverse can be on.
+    static constexpr std::uint16_t kAllGearButtons = kButtonA | kButtonB | kButtonX | kButtonY |
+                                                     kButtonLB | kButtonRB | kReverseButton;
     static constexpr std::uint16_t kHandbrakeButton = kButtonThumbR;
 
 private:

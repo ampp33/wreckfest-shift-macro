@@ -99,6 +99,26 @@ release_value = 0
 press_delay_ms = 20
 release_delay_ms = 20
 
+# How the two delays are counted. "ms" uses press_delay_ms/release_delay_ms
+# above. "frames" uses press_delay_frames/release_delay_frames below,
+# counted in the game's own controller polls (Wreckfest polls once per
+# rendered frame), so exactly which frames see what is fixed: the game
+# sees press_delay_frames frames of clutch only, then
+# release_delay_frames frames of gear + clutch, then gear only.
+# release_delay_frames = 0 means the game never sees the gear and the
+# clutch together; press_delay_frames = 0 means they appear in the same
+# frame. With [logging] level = "info", every shift logs a
+# "Game saw shift to ..." line with what the game actually received.
+#
+# 0/3 frames is the tested sweet spot: the game only counts the clutch if
+# it's engaged in the frame where the gear first appears (a clutch
+# released before that is ignored, and pressing it earlier just delays the
+# shift), and it has to stay engaged a little while after — 1 frame of
+# overlap was often missed, 2 very occasionally, 3 never.
+timing = "frames"
+press_delay_frames = 0
+release_delay_frames = 3
+
 
 [steering]
 # "digital" is currently the only supported mode: steer_left/steer_right
@@ -112,7 +132,7 @@ max_value = 32767
 # center. At the default 32767 max_value, ramp_speed = 5000 means roughly
 # 6.5 seconds from center to full lock — tune to taste. Ignored if
 # `instant` below is true.
-ramp_speed = 5000,
+ramp_speed = 5000
 return_speed = 5000
 
 # If true, steer_left/steer_right snap the axis straight to +-max_value/0
@@ -140,4 +160,4 @@ use_dpad = true
 # "debug" traces every keypress, action dispatch, and clutch/gear state
 # transition — verbose, but exactly what you want when diagnosing a
 # specific shifting issue. Drop back to "info" for normal use.
-level = "debug"
+level = "info"

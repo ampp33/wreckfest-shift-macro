@@ -69,6 +69,12 @@ struct ClutchConfig {
     std::int32_t releaseValue = 0;
     std::chrono::milliseconds pressDelay{2};
     std::chrono::milliseconds releaseDelay{2};
+    /// `timing = "frames"`: count the two delays in game polls
+    /// (pressDelayFrames/releaseDelayFrames) instead of milliseconds, so
+    /// exactly which frames see the clutch and the gear is fixed.
+    bool frameTiming = false;
+    std::uint32_t pressDelayFrames = 2;
+    std::uint32_t releaseDelayFrames = 2;
 };
 
 /// `[steering]` — how digital left/right key presses are turned into an

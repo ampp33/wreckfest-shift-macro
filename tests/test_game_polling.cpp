@@ -115,10 +115,32 @@ TEST(unsafe_poll_fraction_matches_release_delay_model) {
     }
 }
 
-// The real question: with the shipped config, does a typical game poll
-// rate always see the clutch together with the gear button?
+// The real question: with the shipped config, does the game always see the
+// clutch together with the gear button?
 TEST(default_config_is_safe_at_common_poll_rates) {
-    const Config cfg = Rig::defaultConfig();
+    const Config cfg = Rig::shippedConfig();
+    if (cfg.clutch.frameTiming) {
+        // Frame timing is poll-exact, so check what each poll sees. Measured
+        // in game (2026-09-24): the clutch must be engaged in the frame the
+        // gear first appears, and 1 frame of overlap was often missed, 2
+        // very occasionally, 3 never.
+        Rig rig(cfg);
+        rig.driving();
+        rig.down("KEY_Q");
+        int firstGearPoll = -1;
+        int overlap = 0;
+        for (int i = 0; i < 20; ++i) {
+            const XINPUT_GAMEPAD pad = rig.poll();
+            const bool gear = (pad.wButtons & XINPUT_GAMEPAD_A) != 0;
+            const bool clutch = pad.sThumbRY == cfg.clutch.pressValue;
+            if (gear && firstGearPoll < 0) firstGearPoll = i;
+            if (gear && clutch) ++overlap;
+        }
+        CHECK_MSG(firstGearPoll >= 0, "gear never appeared");
+        CHECK_MSG(overlap >= 3, "game sees gear + clutch together for only " << overlap
+                                    << " frame(s); 3 or more never missed in testing");
+        return;
+    }
     const Recording rec = recordShift(cfg);
     for (const double hz : {30.0, 60.0, 120.0, 144.0}) {
         const PollStats s = analyze(rec.snaps, rec.baseline, 1000.0 / hz, cfg);

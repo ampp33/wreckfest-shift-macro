@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "config/Config.h"
 #include "controller/VirtualController.h"
 #include "logging/Logger.h"
 
@@ -9,23 +10,23 @@ namespace vcontroller {
 
 namespace {
 
-/// Human-readable name for debug logging — covers the buttons this class
-/// actually deals in (gears/reverse), falls back to the raw code for
-/// anything else.
-std::string buttonName(std::uint16_t code) {
-    switch (code) {
-        case VirtualController::kButtonA: return "A(Gear1)";
-        case VirtualController::kButtonB: return "B(Gear2)";
-        case VirtualController::kButtonX: return "X(Gear3)";
-        case VirtualController::kButtonY: return "Y(Gear4)";
-        case VirtualController::kButtonLB: return "LB(Gear5)";
-        case VirtualController::kButtonRB: return "RB(Gear6)";
-        case VirtualController::kButtonThumbL: return "ThumbL(Reverse)";
-        default: return "0x" + std::to_string(code);
-    }
-}
+std::string buttonName(std::uint16_t code) { return VirtualController::buttonName(code); }
 
 } // namespace
+
+ClutchController::Settings ClutchController::Settings::fromConfig(const ClutchConfig& config) {
+    Settings settings;
+    settings.enabled = config.enabled;
+    settings.axis = config.axis;
+    settings.pressValue = config.pressValue;
+    settings.releaseValue = config.releaseValue;
+    settings.pressDelay = config.pressDelay;
+    settings.releaseDelay = config.releaseDelay;
+    settings.frameTiming = config.frameTiming;
+    settings.pressFrames = config.pressDelayFrames;
+    settings.releaseFrames = config.releaseDelayFrames;
+    return settings;
+}
 
 ClutchController::ClutchController(VirtualController& controller, Settings initialSettings)
     : controller_(controller), settings_(initialSettings) {
@@ -119,9 +120,19 @@ void ClutchController::beginShift(std::uint16_t gearButtonCode) {
 
     Logger::instance().debug("  nothing active — starting engage sequence");
     activeRequestGear_ = gearButtonCode;
-    pendingWork_ = true;
-    ++generation_;
+    startEngage();
     cv_.notify_all();
+}
+
+void ClutchController::startEngage() {
+    ++generation_;
+    if (settings_.frameTiming) {
+        frameSequenceActive_ = true;
+        frameIndex_ = 0;
+        frameSettings_ = settings_;
+    } else {
+        pendingWork_ = true;
+    }
 }
 
 void ClutchController::endShift(std::uint16_t gearButtonCode) {
@@ -161,6 +172,7 @@ void ClutchController::endShift(std::uint16_t gearButtonCode) {
     activeRequestGear_ = 0;
     activeRequestIsHeld_ = false;
     pendingWork_ = false;
+    frameSequenceActive_ = false;
     ++generation_;
 
     if (pendingGear_ != 0) {
@@ -168,8 +180,7 @@ void ClutchController::endShift(std::uint16_t gearButtonCode) {
         Logger::instance().debug("  starting queued gear " + buttonName(pendingGear_));
         activeRequestGear_ = pendingGear_;
         pendingGear_ = 0;
-        pendingWork_ = true;
-        ++generation_;
+        startEngage();
     }
 
     cv_.notify_all();
@@ -188,6 +199,7 @@ void ClutchController::reset() {
         activeRequestGear_ = 0;
         activeRequestIsHeld_ = false;
         pendingWork_ = false;
+        frameSequenceActive_ = false;
         ++generation_; // cancels any in-flight worker sequence
         cv_.notify_all();
     }
@@ -204,6 +216,40 @@ void ClutchController::reset() {
 
     if (needsSync) {
         controller_.syncReport();
+    }
+}
+
+void ClutchController::onGamePoll() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!frameSequenceActive_) {
+        return;
+    }
+    const Settings& settings = frameSettings_;
+    ++frameIndex_;
+    const bool wantGear = frameIndex_ > settings.pressFrames;
+    const bool wantClutch = frameIndex_ <= settings.pressFrames + settings.releaseFrames;
+
+    if (frameIndex_ == 1) {
+        Logger::instance().debug("poll: frame-timed engage for " + buttonName(activeRequestGear_) +
+                                  ": " + std::to_string(settings.pressFrames) +
+                                  " clutch-only frame(s), " +
+                                  std::to_string(settings.releaseFrames) + " gear+clutch frame(s)");
+    }
+
+    // Stage everything this poll should see, then publish it once below
+    // so the gear and clutch changes land in the same frame.
+    if (wantGear && !activeRequestIsHeld_) {
+        controller_.setButton(activeRequestGear_, true);
+        activeRequestIsHeld_ = true;
+    }
+    autoClutchWantsEngaged_ = wantClutch;
+    syncClutchAxis(settings);
+    controller_.syncReport();
+
+    if (!wantClutch) {
+        frameSequenceActive_ = false;
+        Logger::instance().debug("poll: " + buttonName(activeRequestGear_) +
+                                  " frame-timed engage sequence complete");
     }
 }
 

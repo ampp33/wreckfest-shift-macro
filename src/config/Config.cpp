@@ -106,6 +106,23 @@ Config Config::loadFromFile(const std::filesystem::path& path) {
             std::chrono::milliseconds((*clutch)["press_delay_ms"].value_or(2));
         config.clutch.releaseDelay =
             std::chrono::milliseconds((*clutch)["release_delay_ms"].value_or(2));
+
+        const auto timing = (*clutch)["timing"].value_or(std::string{"ms"});
+        if (timing != "ms" && timing != "frames") {
+            throw std::runtime_error("unrecognized [clutch].timing '" + timing +
+                                      "': expected \"ms\" or \"frames\"");
+        }
+        config.clutch.frameTiming = timing == "frames";
+        const auto frames = [&](std::string_view tomlKey) {
+            const auto value = (*clutch)[tomlKey].value_or(2);
+            if (value < 0 || value > 60) {
+                throw std::runtime_error("[clutch]." + std::string(tomlKey) +
+                                          " must be 0-60 (got " + std::to_string(value) + ")");
+            }
+            return static_cast<std::uint32_t>(value);
+        };
+        config.clutch.pressDelayFrames = frames("press_delay_frames");
+        config.clutch.releaseDelayFrames = frames("release_delay_frames");
     } else {
         config.clutch.enabled = false;
     }

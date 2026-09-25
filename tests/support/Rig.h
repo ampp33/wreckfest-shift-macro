@@ -99,13 +99,23 @@ class Rig {
 public:
     using Clock = std::chrono::steady_clock;
 
-    static Config defaultConfig() {
+    /// config/default.toml exactly as shipped.
+    static Config shippedConfig() {
         return Config::loadFromFile(WRECKFEST_DEFAULT_CONFIG);
+    }
+
+    /// The shipped config with millisecond clutch timing, which most tests
+    /// exercise in real time. Frame timing advances only on game polls and
+    /// has its own poll-driven tests (test_frame_timing.cpp).
+    static Config defaultConfig() {
+        Config c = shippedConfig();
+        c.clutch.frameTiming = false;
+        return c;
     }
 
     explicit Rig(Config config = defaultConfig())
         : config_(std::move(config)),
-          clutch_(controller_, clutchSettings(config_)),
+          clutch_(controller_, ClutchController::Settings::fromConfig(config_.clutch)),
           modes_(controller_, clutch_, config_) {
         controller_.setPublishObserver([this](const XINPUT_GAMEPAD& pad) {
             std::lock_guard<std::mutex> lock(recordMutex_);
@@ -206,6 +216,13 @@ public:
         return state.Gamepad;
     }
 
+    /// One game poll, as XInputHook does it: lets a frame-timed engage
+    /// sequence advance, then returns what the game receives.
+    XINPUT_GAMEPAD poll() {
+        clutch_.onGamePoll();
+        return pad();
+    }
+
     std::string timeline() {
         std::ostringstream os;
         for (const auto& e : events()) {
@@ -219,12 +236,6 @@ public:
 private:
     static double msSince(Clock::time_point t) {
         return std::chrono::duration<double, std::milli>(Clock::now() - t).count();
-    }
-
-    static ClutchController::Settings clutchSettings(const Config& c) {
-        return ClutchController::Settings{c.clutch.enabled,      c.clutch.axis,
-                                          c.clutch.pressValue,   c.clutch.releaseValue,
-                                          c.clutch.pressDelay,   c.clutch.releaseDelay};
     }
 
     Config config_;

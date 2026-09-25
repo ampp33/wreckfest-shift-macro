@@ -44,6 +44,7 @@ add_library(wreckfest-shift-macro SHARED
     src/config/KeyCodes.cpp
     src/modes/ModeManager.cpp
     src/timing/ClutchController.cpp
+    src/timing/ShiftObserver.cpp
     src/logging/Logger.cpp
 )
 

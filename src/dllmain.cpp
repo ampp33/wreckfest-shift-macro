@@ -32,6 +32,7 @@
 #include "logging/Logger.h"
 #include "modes/ModeManager.h"
 #include "timing/ClutchController.h"
+#include "timing/ShiftObserver.h"
 
 namespace {
 
@@ -45,11 +46,25 @@ constexpr auto kTickInterval = std::chrono::milliseconds(4);
 /// How often the tick thread checks the config file for changes.
 constexpr auto kConfigPollInterval = std::chrono::seconds(1);
 
-ClutchController::Settings clutchSettings(const Config& config) {
-    return ClutchController::Settings{
-        config.clutch.enabled,      config.clutch.axis,       config.clutch.pressValue,
-        config.clutch.releaseValue, config.clutch.pressDelay, config.clutch.releaseDelay,
-    };
+/// How often the game's XInput poll timing is summarized in the log
+/// (debug level only). Logged from here rather than from the hook so the
+/// game's input thread never does file I/O.
+constexpr auto kPollTimingLogInterval = std::chrono::seconds(5);
+
+ShiftObserver::Settings shiftObserverSettings(const Config& config) {
+    const auto& clutch = config.clutch;
+    ShiftObserver::Settings settings;
+    settings.clutchEnabled = clutch.enabled;
+    settings.clutchAxis = clutch.axis;
+    settings.clutchReleaseValue = clutch.releaseValue;
+    settings.timingLabel =
+        !clutch.enabled ? "clutch disabled"
+        : clutch.frameTiming
+            ? "frames " + std::to_string(clutch.pressDelayFrames) + "/" +
+                  std::to_string(clutch.releaseDelayFrames)
+            : "ms " + std::to_string(clutch.pressDelay.count()) + "/" +
+                  std::to_string(clutch.releaseDelay.count());
+    return settings;
 }
 
 /// True if the foreground window belongs to this (the game's) process.
@@ -67,14 +82,21 @@ class Plugin {
 public:
     Plugin(fs::path configPath, const Config& config)
         : configPath_(std::move(configPath)),
-          clutch_(controller_, clutchSettings(config)),
+          clutch_(controller_, ClutchController::Settings::fromConfig(config.clutch)),
           modeManager_(controller_, clutch_, config) {
         std::error_code ec;
         configWriteTime_ = fs::last_write_time(configPath_, ec);
+        shiftObserver_.updateSettings(shiftObserverSettings(config));
     }
 
     void start(HMODULE gameModule, const Config& config) {
-        if (!XInputHook::install(gameModule, controller_, config.controller.slot)) {
+        XInputHook::Listeners listeners;
+        listeners.beforePoll = [this] { clutch_.onGamePoll(); };
+        listeners.afterPoll = [this](const XINPUT_GAMEPAD& seen) {
+            shiftObserver_.observe(seen, std::chrono::steady_clock::now());
+        };
+        if (!XInputHook::install(gameModule, controller_, config.controller.slot,
+                                 std::move(listeners))) {
             Logger::instance().error(
                 "Game executable doesn't import XInputGetState; the virtual controller "
                 "can't be connected. Is this the 64-bit Wreckfest_x64.exe?");
@@ -104,6 +126,7 @@ private:
     void tickLoop() {
         auto lastTick = std::chrono::steady_clock::now();
         auto lastConfigPoll = lastTick;
+        auto lastPollTimingLog = lastTick;
         bool hadFocus = false; // the game window doesn't exist yet at startup
         bool warnedNoKeyboardHook = false;
 
@@ -124,6 +147,10 @@ private:
             hadFocus = hasFocus;
             lastTick = now;
 
+            for (const std::string& report : shiftObserver_.takeReports()) {
+                Logger::instance().debug(report);
+            }
+
             if (now - lastConfigPoll >= kConfigPollInterval) {
                 lastConfigPoll = now;
                 reloadConfigIfChanged();
@@ -133,6 +160,11 @@ private:
                         "Game window is focused but the game hasn't installed its keyboard hook "
                         "through us yet; hotkeys won't work until it does.");
                 }
+            }
+
+            if (now - lastPollTimingLog >= kPollTimingLogInterval) {
+                lastPollTimingLog = now;
+                XInputHook::logPollTiming();
             }
         }
     }
@@ -150,6 +182,7 @@ private:
             const Config reloaded = Config::loadFromFile(configPath_);
             Logger::instance().setLevel(reloaded.logLevel);
             XInputHook::setSlot(reloaded.controller.slot);
+            shiftObserver_.updateSettings(shiftObserverSettings(reloaded));
             std::lock_guard<std::mutex> lock(mutex_);
             modeManager_.applyConfig(reloaded);
         } catch (const std::exception& ex) {
@@ -167,6 +200,7 @@ private:
     // window thread, ticks and reloads on tickThread_.
     std::mutex mutex_;
     ModeManager modeManager_;
+    ShiftObserver shiftObserver_;
     std::thread tickThread_;
 };
 

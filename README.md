@@ -180,6 +180,27 @@ to skip the clutch axis entirely (gear keys still get the press/hold/
 release timing). A tap faster than the two delays combined cancels
 cleanly rather than pressing a gear nobody asked for.
 
+The game only sees the controller when it polls it, so `release_delay_ms`
+shorter than the game's poll interval risks the game seeing the gear
+button without the clutch. With `[logging] level = "debug"`, the log gets
+a `Game poll timing:` line every 5 seconds with the measured gap between
+the game's polls (min/avg/max and a histogram). Use that to pick the
+delays.
+
+At debug level every shift also logs a `Game saw shift to ...` line: how
+many of the game's frames saw the clutch before the gear appeared, and
+how many saw both together.
+
+With `timing = "frames"`, the delays are counted in game polls
+(`press_delay_frames`/`release_delay_frames`) instead of milliseconds,
+so you choose exactly which frames see what.
+
+The shipped default is frame timing with 0/3: the gear and the clutch
+appear in the same frame, and the clutch stays in for 3 frames. In
+testing, Wreckfest ignored a clutch released before the gear appeared,
+pressing it earlier only slowed the shift, and fewer than 3 frames of
+overlap sometimes missed.
+
 `[bindings].clutch` (default `KEY_LEFTSHIFT`) is a separate clutch key
 you hold manually. Holding it engages the axis directly, independent of
 any gear shift.

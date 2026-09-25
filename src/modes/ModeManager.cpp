@@ -42,14 +42,7 @@ void ModeManager::applyConfig(const Config& config) {
     steeringConfig_ = config.steering;
     rebuildActionMap();
 
-    clutch_.updateSettings(ClutchController::Settings{
-        config.clutch.enabled,
-        config.clutch.axis,
-        config.clutch.pressValue,
-        config.clutch.releaseValue,
-        config.clutch.pressDelay,
-        config.clutch.releaseDelay,
-    });
+    clutch_.updateSettings(ClutchController::Settings::fromConfig(config.clutch));
 
     Logger::instance().info("Configuration applied");
 }

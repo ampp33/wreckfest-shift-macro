@@ -2,7 +2,12 @@
 
 #include <xinput.h>
 
+#include <array>
 #include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <iterator>
+#include <mutex>
 #include <string>
 
 #include "controller/VirtualController.h"
@@ -18,18 +23,61 @@ using SetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_VIBRATION*);
 using GetCapabilitiesFn = DWORD(WINAPI*)(DWORD, DWORD, XINPUT_CAPABILITIES*);
 
 VirtualController* gController = nullptr;
+Listeners gListeners; // set once in install(), before any hook can run
 std::atomic<std::uint32_t> gSlot{0};
 
 GetStateFn gRealGetState = nullptr;
 SetStateFn gRealSetState = nullptr;
 GetCapabilitiesFn gRealGetCapabilities = nullptr;
 
+// Poll-timing stats for logPollTiming(). Gap histogram bucket upper
+// bounds in ms; the last bucket catches everything above.
+constexpr double kGapBucketsMs[] = {1, 3, 5, 8, 12, 18, 35};
+constexpr std::size_t kGapBucketCount = std::size(kGapBucketsMs) + 1;
+
+struct PollTiming {
+    std::uint64_t polls = 0;
+    std::uint64_t gaps = 0;
+    double minGapMs = 0;
+    double maxGapMs = 0;
+    double totalGapMs = 0;
+    std::array<std::uint64_t, kGapBucketCount> histogram{};
+};
+
+std::mutex gTimingMutex;
+PollTiming gTiming;
+// Kept across logPollTiming() resets so the first gap after a report is
+// still measured.
+std::chrono::steady_clock::time_point gLastPoll;
+bool gHaveLastPoll = false;
+
+void recordPoll() {
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(gTimingMutex);
+    ++gTiming.polls;
+    if (gHaveLastPoll) {
+        const double gapMs = std::chrono::duration<double, std::milli>(now - gLastPoll).count();
+        if (gTiming.gaps == 0 || gapMs < gTiming.minGapMs) gTiming.minGapMs = gapMs;
+        if (gTiming.gaps == 0 || gapMs > gTiming.maxGapMs) gTiming.maxGapMs = gapMs;
+        ++gTiming.gaps;
+        gTiming.totalGapMs += gapMs;
+        std::size_t bucket = 0;
+        while (bucket < std::size(kGapBucketsMs) && gapMs >= kGapBucketsMs[bucket]) ++bucket;
+        ++gTiming.histogram[bucket];
+    }
+    gLastPoll = now;
+    gHaveLastPoll = true;
+}
+
 DWORD WINAPI hookedGetState(DWORD userIndex, XINPUT_STATE* state) {
     if (userIndex == gSlot.load(std::memory_order_relaxed)) {
         if (state == nullptr) {
             return ERROR_BAD_ARGUMENTS;
         }
+        recordPoll();
+        if (gListeners.beforePoll) gListeners.beforePoll();
         gController->readState(*state);
+        if (gListeners.afterPoll) gListeners.afterPoll(state->Gamepad);
         return ERROR_SUCCESS;
     }
     return gRealGetState ? gRealGetState(userIndex, state) : ERROR_DEVICE_NOT_CONNECTED;
@@ -75,8 +123,10 @@ constexpr const char* kXInputDlls[] = {
 
 } // namespace
 
-bool install(HMODULE gameModule, VirtualController& controller, std::uint32_t slot) {
+bool install(HMODULE gameModule, VirtualController& controller, std::uint32_t slot,
+             Listeners listeners) {
     gController = &controller;
+    gListeners = std::move(listeners);
     gSlot.store(slot);
 
     for (const char* dll : kXInputDlls) {
@@ -106,6 +156,39 @@ void setSlot(std::uint32_t slot) {
     if (gSlot.exchange(slot) != slot) {
         Logger::instance().info("Virtual controller moved to XInput slot " + std::to_string(slot));
     }
+}
+
+void logPollTiming() {
+    PollTiming timing;
+    {
+        std::lock_guard<std::mutex> lock(gTimingMutex);
+        timing = gTiming;
+        gTiming = PollTiming{};
+    }
+    if (timing.polls == 0 || Logger::instance().level() < LogLevel::Debug) {
+        return;
+    }
+
+    char line[160];
+    std::string message = "Game poll timing: " + std::to_string(timing.polls) + " polls";
+    if (timing.gaps > 0) {
+        const double avgGapMs = timing.totalGapMs / double(timing.gaps);
+        std::snprintf(line, sizeof(line),
+                      ", gap min %.2f / avg %.2f / max %.2f ms (~%.0f Hz); gaps ms:", timing.minGapMs,
+                      avgGapMs, timing.maxGapMs, 1000.0 / avgGapMs);
+        message += line;
+        for (std::size_t i = 0; i < kGapBucketCount; ++i) {
+            if (i < std::size(kGapBucketsMs)) {
+                std::snprintf(line, sizeof(line), " <%g:%llu", kGapBucketsMs[i],
+                              static_cast<unsigned long long>(timing.histogram[i]));
+            } else {
+                std::snprintf(line, sizeof(line), " >=%g:%llu", kGapBucketsMs[i - 1],
+                              static_cast<unsigned long long>(timing.histogram[i]));
+            }
+            message += line;
+        }
+    }
+    Logger::instance().debug(message);
 }
 
 } // namespace vcontroller::XInputHook

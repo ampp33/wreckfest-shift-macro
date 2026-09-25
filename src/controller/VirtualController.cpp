@@ -80,6 +80,36 @@ void VirtualController::setPublishObserver(PublishObserver observer) {
     observer_ = std::move(observer);
 }
 
+std::int32_t VirtualController::axisValue(const XINPUT_GAMEPAD& pad, std::uint16_t code) {
+    const auto hat = [&](WORD negativeBit, WORD positiveBit) {
+        return (pad.wButtons & negativeBit) ? -1 : (pad.wButtons & positiveBit) ? 1 : 0;
+    };
+    switch (code) {
+        case kLeftStickX: return pad.sThumbLX;
+        case kLeftStickY: return pad.sThumbLY;
+        case kRightStickX: return pad.sThumbRX;
+        case kRightStickY: return pad.sThumbRY;
+        case kLeftTrigger: return pad.bLeftTrigger;
+        case kRightTrigger: return pad.bRightTrigger;
+        case kDpadX: return hat(XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT);
+        case kDpadY: return hat(XINPUT_GAMEPAD_DPAD_UP, XINPUT_GAMEPAD_DPAD_DOWN);
+        default: return 0;
+    }
+}
+
+std::string VirtualController::buttonName(std::uint16_t code) {
+    switch (code) {
+        case kButtonA: return "A(Gear1)";
+        case kButtonB: return "B(Gear2)";
+        case kButtonX: return "X(Gear3)";
+        case kButtonY: return "Y(Gear4)";
+        case kButtonLB: return "LB(Gear5)";
+        case kButtonRB: return "RB(Gear6)";
+        case kButtonThumbL: return "ThumbL(Reverse)";
+        default: return "0x" + std::to_string(code);
+    }
+}
+
 void VirtualController::readState(XINPUT_STATE& state) {
     std::lock_guard<std::mutex> lock(mutex_);
     state.dwPacketNumber = packetNumber_;
